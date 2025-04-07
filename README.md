@@ -1,137 +1,114 @@
-# MQTT Web Service
+# pymotivaxmc2
 
-A Python-based web service that acts as an MQTT client to manage multiple devices using a plugin-based architecture.
+A Python library for controlling Emotiva A/V receivers. This is a fork of the original pymotiva project, with additional features and improvements.
 
 ## Features
 
-- FastAPI REST API for device management
-- MQTT client for device communication
-- Plugin-based architecture for device modules
-- JSON configuration files
-- Logging system
-
-## Architecture
-
-- **Web Service**: Built with FastAPI
-- **MQTT Client**: Based on `asyncio-mqtt`
-- **Device Modules**: Plugin-based system for device-specific functionality
-- **Configuration**: JSON files for system and device settings
-- **Logging**: File-based logging
+- Control Emotiva A/V receivers over the network
+- Support for various commands (power, volume, source selection, etc.)
+- Asynchronous operation
+- Command-line interface
+- Type hints and modern Python features
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/mqtt-web-service.git
-cd mqtt-web-service
+git clone https://github.com/yourusername/pymotivaxmc2.git
+cd pymotivaxmc2
 ```
 
 2. Create a virtual environment and install dependencies:
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
-3. Configure the application:
-   - Edit `config/system.json` for MQTT broker settings
-   - Add device configurations in `config/devices/`
+## Usage
 
-## Running the Application
+### As a Library
 
-Start the web service:
-
-```bash
-python -m app.main
-```
-
-Or use uvicorn directly:
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-## API Endpoints
-
-- `GET /` - Service information
-- `GET /system` - System information
-- `POST /reload` - Reload configurations and devices
-- `GET /devices` - List all devices
-- `GET /devices/{device_name}` - Get information about a specific device
-- `POST /publish` - Publish a message to an MQTT topic
-
-## Creating Device Modules
-
-1. Create a new Python file in the `devices/` directory
-2. Implement two main functions:
-   - `subscribe_topics(config)` - Returns a list of MQTT topics to subscribe to
-   - `handle_message(topic, payload)` - Processes incoming MQTT messages
-
-Example:
 ```python
-def subscribe_topics(config):
-    device_name = config.get('device_name', 'default')
-    return [f"home/{device_name}/command", f"home/{device_name}/status"]
+from pymotivaxmc2 import Emotiva, EmotivaConfig
 
-async def handle_message(topic, payload):
-    # Process the message
-    print(f"Received on {topic}: {payload}")
+# Create a configuration
+config = EmotivaConfig(
+    host="192.168.1.100",  # Your Emotiva device's IP address
+    port=7025             # Default port for Emotiva devices
+)
+
+# Create an instance
+emotiva = Emotiva(config)
+
+# Connect to the device
+await emotiva.connect()
+
+# Send commands
+await emotiva.power_on()
+await emotiva.set_volume(-40)  # Volume in dB
+await emotiva.set_source("XLR1")
+
+# Disconnect when done
+await emotiva.disconnect()
 ```
 
-## Configuration Files
+### Command Line Interface
 
-### System Configuration (config/system.json)
+The package includes a command-line interface for basic operations:
 
-```json
-{
-  "mqtt_broker": {
-    "host": "localhost",
-    "port": 1883,
-    "client_id": "mqtt_web_service",
-    "auth": {
-      "username": "mqtt_user",
-      "password": "mqtt_password"
-    }
-  },
-  "web_service": {
-    "host": "0.0.0.0",
-    "port": 8000
-  },
-  "log_level": "INFO",
-  "log_file": "logs/service.log"
-}
+```bash
+# Get device status
+emotiva-cli status --host 192.168.1.100
+
+# Power on the device
+emotiva-cli power on --host 192.168.1.100
+
+# Set volume
+emotiva-cli volume -40 --host 192.168.1.100
+
+# Change source
+emotiva-cli source XLR1 --host 192.168.1.100
 ```
 
-### Device Configuration (config/devices/{device_name}.json)
+## API Reference
 
-```json
-{
-  "device_name": "example_device",
-  "device_type": "example",
-  "mqtt_topics": [
-    "home/example/status",
-    "home/example/command"
-  ],
-  "auth": {
-    "username": "device_user",
-    "password": "device_password"
-  },
-  "parameters": {
-    "update_interval": 60,
-    "threshold": 25.5
-  }
-}
+### Main Classes
+
+#### EmotivaConfig
+
+Configuration class for Emotiva devices:
+
+```python
+class EmotivaConfig:
+    host: str          # Device IP address
+    port: int = 7025   # Device port (default: 7025)
+    timeout: int = 5   # Connection timeout in seconds
 ```
 
-## Deployment
+#### Emotiva
 
-For production deployment, it's recommended to:
+Main class for device control:
 
-1. Run behind an Nginx reverse proxy
-2. Use a process manager like Supervisor or systemd
-3. Set up proper authentication
-4. Use environment variables for sensitive configuration
+```python
+class Emotiva:
+    async def connect() -> None
+    async def disconnect() -> None
+    async def power_on() -> None
+    async def power_off() -> None
+    async def set_volume(volume_db: float) -> None
+    async def set_source(source: str) -> None
+    async def get_status() -> dict
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run tests
+5. Submit a pull request
 
 ## License
 
-MIT 
+MIT License 

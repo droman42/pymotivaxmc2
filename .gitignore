@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.class
 pymotivaxmc2/__pycache__/
+venv/
 
 # Distribution / packaging
 dist/

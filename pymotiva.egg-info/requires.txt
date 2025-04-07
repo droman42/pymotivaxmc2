@@ -1,0 +1,8 @@
+typing-extensions>=3.7.4
+
+[dev]
+pytest>=6.0
+pytest-cov>=2.0
+black>=21.0
+mypy>=0.9
+flake8>=3.9

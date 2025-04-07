@@ -1,6 +1,8 @@
 # pymotivaxmc2
 
-A Python library for controlling Emotiva A/V receivers. This is a fork of the original pymotiva project, with additional features and improvements.
+A Python library for controlling Emotiva A/V receivers.
+This is a full rewrite of the original pymotiva project (https://github.com/thecynic/pymotiva), with additional features and improvements.
+It was tested to work with eMotiva XMC-2. Original functionality should still work, but I don't have devices to test with.
 
 ## Features
 
@@ -14,7 +16,7 @@ A Python library for controlling Emotiva A/V receivers. This is a fork of the or
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/pymotivaxmc2.git
+git clone https://github.com/droman42/pymotivaxmc2.git
 cd pymotivaxmc2
 ```
 

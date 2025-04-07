@@ -8,14 +8,14 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="pymotiva",
+    name="pymotivaxmc2",
     version="0.1.0",
-    author="Your Name",
-    author_email="your.email@example.com",
-    description="A Python library for controlling Emotiva A/V receivers",
+    author="Dima Zavin, Dmitri Romanovskij",
+    author_email="dmitri.romanovski@gmail.com",
+    description="A Python library for controlling Emotiva A/V receivers, tested with XMC-2",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/pymotiva",
+    url="https://github.com/droman42/pymotivaxmc2",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",

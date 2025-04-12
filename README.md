@@ -14,16 +14,17 @@ It was tested to work with eMotiva XMC-2. Original functionality should still wo
 
 ## Installation
 
-1. Clone the repository:
+Install the library using pip:
+
+```bash
+pip install pymotivaxmc2
+```
+
+For development installation, clone the repository and install in editable mode:
+
 ```bash
 git clone https://github.com/droman42/pymotivaxmc2.git
 cd pymotivaxmc2
-```
-
-2. Create a virtual environment and install dependencies:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -e .
 ```
 
@@ -48,8 +49,16 @@ Before using this library, ensure your Emotiva device is properly configured for
    - Notification communication: Port specified in transponder response (typically 7003)
 
 4. Device Settings:
-   - Enable network control in the device's settings menu
-   - Set a friendly name for the device (optional)
+   - Enable network control in the device's settings menu:
+     1. Press the Menu button on the remote or front panel
+     2. Navigate to "Settings" using the arrow keys
+     3. Select "Network" from the settings menu
+     4. Choose "Network Control"
+     5. Set to "Enabled"
+   - Set a friendly name for the device (optional):
+     1. In the same Network menu
+     2. Select "Device Name"
+     3. Enter desired name using the on-screen keyboard
    - Ensure no firewall is blocking the required UDP ports
 
 5. Network Requirements:

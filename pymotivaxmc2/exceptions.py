@@ -45,3 +45,8 @@ class InvalidModeError(Error):
     - The mode is not compatible with the current configuration
     """
     pass
+
+
+class DeviceOfflineError(Error):
+    """Raised when the device appears to be offline based on missed keepalives."""
+    pass

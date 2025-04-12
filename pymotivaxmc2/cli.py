@@ -10,7 +10,8 @@ import sys
 from typing import Optional, Dict, Any
 
 from . import Emotiva, EmotivaConfig
-from .exceptions import Error, InvalidTransponderResponseError
+from .exceptions import Error, InvalidTransponderResponseError, InvalidSourceError, InvalidModeError
+from .constants import MODE_PRESETS, INPUT_SOURCES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,11 +79,51 @@ def parse_args() -> argparse.Namespace:
         help="Volume level (0-100)"
     )
     
+    # Mode command
+    mode_parser = subparsers.add_parser(
+        "mode",
+        help="Set audio processing mode"
+    )
+    mode_parser.add_argument(
+        "mode",
+        choices=list(MODE_PRESETS.keys()),
+        help="Mode to set"
+    )
+    
+    # Input command
+    input_parser = subparsers.add_parser(
+        "input",
+        help="Set input source"
+    )
+    input_parser.add_argument(
+        "source",
+        choices=list(INPUT_SOURCES.keys()),
+        help="Input source to set"
+    )
+    
+    # Source command
+    source_parser = subparsers.add_parser(
+        "source",
+        help="Set source using source command"
+    )
+    source_parser.add_argument(
+        "source",
+        choices=list(INPUT_SOURCES.keys()),
+        help="Source to set"
+    )
+    
+    # Mode preset commands
+    for mode in MODE_PRESETS:
+        mode_preset_parser = subparsers.add_parser(
+            f"mode_{mode}",
+            help=f"Set {MODE_PRESETS[mode]} mode"
+        )
+    
     return parser.parse_args()
 
 def handle_notification(data: Dict[str, Any]) -> None:
     """Handle device notifications."""
-    _LOGGER.info("Received notification: %s", data)
+    print(f"Notification: {data}")
 
 def main() -> int:
     """Main entry point for the CLI."""
@@ -110,12 +151,39 @@ def main() -> int:
             response = emotiva.send_command("volume", {"value": args.level})
             print(f"Volume command response: {response}")
             
+        elif args.command == "mode":
+            emotiva.discover()  # Ensure device is discovered
+            response = emotiva.set_mode(args.mode)
+            print(f"Mode command response: {response}")
+            
+        elif args.command == "input":
+            emotiva.discover()  # Ensure device is discovered
+            response = emotiva.set_input(args.source)
+            print(f"Input command response: {response}")
+            
+        elif args.command == "source":
+            emotiva.discover()  # Ensure device is discovered
+            response = emotiva.set_source(args.source)
+            print(f"Source command response: {response}")
+            
+        elif args.command.startswith("mode_"):
+            mode = args.command[5:]  # Remove "mode_" prefix
+            emotiva.discover()  # Ensure device is discovered
+            response = emotiva.set_mode(mode)
+            print(f"Mode command response: {response}")
+            
         else:
             print("No command specified. Use --help for usage information.")
             return 1
             
     except InvalidTransponderResponseError as e:
         _LOGGER.error("Device communication error: %s", e)
+        return 1
+    except InvalidSourceError as e:
+        _LOGGER.error("Invalid source error: %s", e)
+        return 1
+    except InvalidModeError as e:
+        _LOGGER.error("Invalid mode error: %s", e)
         return 1
     except Error as e:
         _LOGGER.error("Error: %s", e)

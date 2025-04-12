@@ -7,6 +7,7 @@ to ensure type consistency and improve code maintainability.
 
 from typing import Dict, Any, Callable, Optional, Union
 import socket
+from .constants import DEFAULT_KEEPALIVE_INTERVAL, MAX_MISSED_KEEPALIVES
 
 # Type aliases for better readability
 DeviceCallback = Callable[[Dict[str, Any]], None]
@@ -27,7 +28,9 @@ class EmotivaConfig:
         discover_request_port: int = 7000,
         discover_response_port: int = 7001,
         max_retries: int = 3,
-        retry_delay: float = 1.0
+        retry_delay: float = 1.0,
+        keepalive_interval: int = DEFAULT_KEEPALIVE_INTERVAL,
+        max_missed_keepalives: int = MAX_MISSED_KEEPALIVES
     ) -> None:
         """
         Initialize Emotiva configuration.
@@ -39,10 +42,14 @@ class EmotivaConfig:
             discover_response_port (int): Port for discovery responses
             max_retries (int): Maximum number of retries for failed operations
             retry_delay (float): Delay between retries in seconds
+            keepalive_interval (int): Expected keepalive interval in milliseconds
+            max_missed_keepalives (int): Maximum number of missed keepalives before considering device offline
         """
         self.ip = ip
         self.timeout = timeout
         self.discover_request_port = discover_request_port
         self.discover_response_port = discover_response_port
         self.max_retries = max_retries
-        self.retry_delay = retry_delay 
+        self.retry_delay = retry_delay
+        self.keepalive_interval = keepalive_interval
+        self.max_missed_keepalives = max_missed_keepalives 

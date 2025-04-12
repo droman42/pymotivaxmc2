@@ -10,14 +10,20 @@ import time
 import logging
 import threading
 from typing import Optional, Dict, Any, Callable
+from datetime import datetime, timedelta
 
 from .exceptions import (
     InvalidTransponderResponseError,
     InvalidSourceError,
-    InvalidModeError
+    InvalidModeError,
+    DeviceOfflineError
 )
 from .utils import format_request, parse_response, validate_response, extract_command_response
-from .constants import DISCOVER_REQ_PORT, DISCOVER_RESP_PORT, NOTIFY_EVENTS
+from .constants import (
+    DISCOVER_REQ_PORT, DISCOVER_RESP_PORT, NOTIFY_EVENTS,
+    PROTOCOL_VERSION, DEFAULT_KEEPALIVE_INTERVAL,
+    MODE_PRESETS, INPUT_SOURCES
+)
 from .network import SocketManager
 from .types import EmotivaConfig
 
@@ -36,11 +42,14 @@ class Emotiva:
     Attributes:
         _ip (str): IP address of the Emotiva device
         _timeout (int): Socket timeout in seconds
-        _transponder_port (Optional[int]): Port number for command communication
+        _transponder_port (Optional[int]): Port for command communication
         _callback (Optional[Callable]): Function to handle device notifications
         _lock (threading.Lock): Thread lock for thread-safe operations
         _socket_manager (SocketManager): Manages network communication
         _config (EmotivaConfig): Configuration object
+        _last_keepalive (datetime): Timestamp of last keepalive received
+        _missed_keepalives (int): Number of missed keepalives
+        _sequence_number (int): Current sequence number for notifications
     """
     
     def __init__(self, config: EmotivaConfig) -> None:
@@ -50,10 +59,6 @@ class Emotiva:
         Args:
             config (EmotivaConfig): Configuration for the Emotiva device
         """
-        print(f"Initializing Emotiva with config: {config}")
-        print(f"Config type: {type(config)}")
-        print(f"Config attributes: {dir(config)}")
-        
         self._config = config
         self._ip: str = config.ip
         self._timeout: int = config.timeout
@@ -61,8 +66,11 @@ class Emotiva:
         self._callback: Optional[Callable[[Dict[str, Any]], None]] = None
         self._lock: threading.Lock = threading.Lock()
         self._socket_manager: SocketManager = SocketManager()
+        self._last_keepalive: Optional[datetime] = None
+        self._missed_keepalives: int = 0
+        self._sequence_number: int = 0
         
-        print(f"Initialized with ip: {self._ip}, timeout: {self._timeout}")
+        _LOGGER.debug("Initialized with ip: %s, timeout: %d", self._ip, self._timeout)
 
     def discover(self) -> int:
         """
@@ -92,8 +100,8 @@ class Emotiva:
                 _LOGGER.error("Failed to bind to port %d: %s", self._config.discover_response_port, e)
                 raise InvalidTransponderResponseError(f"Failed to bind to port {self._config.discover_response_port}: {e}")
 
-            # Format and send the discovery request
-            request = format_request('Request', {'Discover': ''})
+            # Format and send the discovery request with protocol version
+            request = format_request('emotivaPing', {'protocol': PROTOCOL_VERSION})
             _LOGGER.debug("Sending discovery request to %s:%d", self._ip, self._config.discover_request_port)
             _LOGGER.debug("Request content: %s", request)
             sock.sendto(request, (self._ip, self._config.discover_request_port))
@@ -112,16 +120,48 @@ class Emotiva:
 
             # Parse and validate the response
             doc = parse_response(data)
-            if not validate_response(doc, "Response") or doc.find('Discover') is None:
+            if not validate_response(doc, "emotivaTransponder"):
                 _LOGGER.error("Invalid discovery response from %s: %s", self._ip, data)
                 raise InvalidTransponderResponseError('Invalid discovery response')
 
-            self._transponder_port = int(doc.find('Discover').attrib['port'])
+            # Extract transponder port and keepalive interval
+            control = doc.find('control')
+            if control is not None:
+                self._transponder_port = int(control.find('controlPort').text)
+                keepalive = control.find('keepAlive')
+                if keepalive is not None:
+                    self._config.keepalive_interval = int(keepalive.text)
+                    _LOGGER.debug("Device keepalive interval: %d ms", self._config.keepalive_interval)
+            else:
+                _LOGGER.error("Missing control information in discovery response")
+                raise InvalidTransponderResponseError('Missing control information in discovery response')
+
             _LOGGER.info("Successfully discovered device %s on port %d", self._ip, self._transponder_port)
             return self._transponder_port
 
         finally:
             sock.close()
+
+    def _check_keepalive(self) -> None:
+        """
+        Check if the device is still alive based on keepalive messages.
+        
+        Raises:
+            DeviceOfflineError: If too many keepalives have been missed
+        """
+        if self._last_keepalive is None:
+            return
+            
+        now = datetime.now()
+        expected_interval = timedelta(milliseconds=self._config.keepalive_interval)
+        missed_intervals = (now - self._last_keepalive) // expected_interval
+        
+        if missed_intervals > 0:
+            self._missed_keepalives += missed_intervals
+            _LOGGER.warning("Missed %d keepalive intervals from %s", missed_intervals, self._ip)
+            
+            if self._missed_keepalives >= self._config.max_missed_keepalives:
+                raise DeviceOfflineError(f"Device {self._ip} appears to be offline")
 
     def set_callback(self, callback: Callable[[Dict[str, Any]], None]) -> None:
         """
@@ -156,6 +196,16 @@ class Emotiva:
         """
         _LOGGER.debug("Received notification from %s: %s", self._ip, data)
         doc = parse_response(data)
+        
+        # Check sequence number
+        sequence = doc.get('sequence')
+        if sequence is not None:
+            seq_num = int(sequence)
+            if seq_num <= self._sequence_number:
+                _LOGGER.warning("Received out-of-order notification from %s: %d <= %d",
+                              self._ip, seq_num, self._sequence_number)
+            self._sequence_number = seq_num
+        
         if not validate_response(doc, "Notify"):
             _LOGGER.warning("Invalid notification format from %s: %s", self._ip, data)
             return
@@ -163,6 +213,9 @@ class Emotiva:
         changed = {}
         for el in doc:
             if el.tag in NOTIFY_EVENTS:
+                if el.tag == 'keepalive':
+                    self._last_keepalive = datetime.now()
+                    self._missed_keepalives = 0
                 changed[el.tag] = el.attrib
                 
         if changed and self._callback:
@@ -185,15 +238,19 @@ class Emotiva:
             
         Raises:
             InvalidTransponderResponseError: If the device is not discovered or no response is received
+            DeviceOfflineError: If the device appears to be offline
         """
         if self._transponder_port is None:
             _LOGGER.error("Cannot send command to %s: device not discovered", self._ip)
             raise InvalidTransponderResponseError('Device not discovered yet')
             
+        # Check device status
+        self._check_keepalive()
+            
         _LOGGER.debug("Sending command '%s' to %s:%d with params: %s", 
                      cmd, self._ip, self._transponder_port, params)
                      
-        req = format_request('Request', [(cmd, params or {})])
+        req = format_request('emotivaControl', [(cmd, params or {})])
         self._socket_manager.send_data(self._ip, self._transponder_port, req)
         
         # Create a temporary socket for receiving the response
@@ -215,6 +272,183 @@ class Emotiva:
             raise InvalidTransponderResponseError('Invalid command response')
             
         return response
+
+    def set_mode(self, mode: str) -> Dict[str, Any]:
+        """
+        Set the audio processing mode.
+        
+        Args:
+            mode (str): Mode to set (e.g., 'stereo', 'direct', 'dolby', etc.)
+            
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidModeError: If the specified mode is not valid
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        if mode not in MODE_PRESETS:
+            raise InvalidModeError(f"Invalid mode: {mode}. Valid modes are: {list(MODE_PRESETS.keys())}")
+            
+        return self.send_command(mode, {"value": 0})
+        
+    def set_input(self, input_source: str) -> Dict[str, Any]:
+        """
+        Set the input source.
+        
+        Args:
+            input_source (str): Input source to set (e.g., 'hdmi1', 'coax1', etc.)
+            
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidSourceError: If the specified input source is not valid
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        if input_source not in INPUT_SOURCES:
+            raise InvalidSourceError(f"Invalid input source: {input_source}. Valid sources are: {list(INPUT_SOURCES.keys())}")
+            
+        return self.send_command(input_source, {"value": 0})
+        
+    def set_source(self, source: str) -> Dict[str, Any]:
+        """
+        Set the source using the source command.
+        
+        Args:
+            source (str): Source to set (e.g., 'hdmi1', 'coax1', etc.)
+            
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidSourceError: If the specified source is not valid
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        if source not in INPUT_SOURCES:
+            raise InvalidSourceError(f"Invalid source: {source}. Valid sources are: {list(INPUT_SOURCES.keys())}")
+            
+        return self.send_command("source", {"value": source})
+        
+    def set_movie_mode(self) -> Dict[str, Any]:
+        """
+        Set the movie preset mode.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        return self.send_command("movie", {"value": 0})
+        
+    def set_music_mode(self) -> Dict[str, Any]:
+        """
+        Set the music preset mode.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        return self.send_command("music", {"value": 0})
+        
+    def set_stereo_mode(self) -> Dict[str, Any]:
+        """
+        Set the stereo mode.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        return self.send_command("stereo", {"value": 0})
+        
+    def set_direct_mode(self) -> Dict[str, Any]:
+        """
+        Set the direct mode.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        return self.send_command("direct", {"value": 0})
+        
+    def set_dolby_mode(self) -> Dict[str, Any]:
+        """
+        Set the Dolby mode.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        return self.send_command("dolby", {"value": 0})
+        
+    def set_dts_mode(self) -> Dict[str, Any]:
+        """
+        Set the DTS mode.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        return self.send_command("dts", {"value": 0})
+        
+    def set_all_stereo_mode(self) -> Dict[str, Any]:
+        """
+        Set the all stereo mode.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        return self.send_command("all_stereo", {"value": 0})
+        
+    def set_auto_mode(self) -> Dict[str, Any]:
+        """
+        Set the auto mode.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        return self.send_command("auto", {"value": 0})
+        
+    def set_reference_stereo_mode(self) -> Dict[str, Any]:
+        """
+        Set the reference stereo mode.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        return self.send_command("reference_stereo", {"value": 0})
+        
+    def set_surround_mode(self) -> Dict[str, Any]:
+        """
+        Set the surround mode.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        return self.send_command("surround_mode", {"value": 0})
 
     def __del__(self):
         """Clean up resources when the object is destroyed."""

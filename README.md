@@ -1,12 +1,12 @@
 # pymotivaxmc2
 
-A Python library for controlling Emotiva A/V receivers.
+A Python library for controlling eMotiva A/V receivers.
 This is a full rewrite of the original pymotiva project (https://github.com/thecynic/pymotiva), with additional features and improvements.
 It was tested to work with eMotiva XMC-2. Original functionality should still work, but I don't have devices to test with.
 
 ## Features
 
-- Control Emotiva A/V receivers over the network
+- Control eMotiva A/V receivers over the network
 - Support for various commands (power, volume, source selection, etc.)
 - Asynchronous operation
 - Command-line interface

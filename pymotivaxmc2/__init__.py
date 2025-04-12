@@ -1,6 +1,9 @@
 from .emotiva import Emotiva
-from .exceptions import Error, InvalidTransponderResponseError, InvalidSourceError, InvalidModeError
+from .exceptions import Error, InvalidTransponderResponseError, InvalidSourceError, InvalidModeError, DeviceOfflineError
 from .types import EmotivaConfig
+from .constants import INPUT_SOURCES, MODE_PRESETS
+
+__version__ = "0.2.0"
 
 __all__ = [
     'Emotiva',
@@ -8,5 +11,9 @@ __all__ = [
     'Error',
     'InvalidTransponderResponseError',
     'InvalidSourceError',
-    'InvalidModeError'
+    'InvalidModeError',
+    'DeviceOfflineError',
+    'INPUT_SOURCES',
+    'MODE_PRESETS',
+    '__version__'
 ]

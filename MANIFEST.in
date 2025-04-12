@@ -1,0 +1,38 @@
+# Include license and readme file
+include LICENSE
+include README.md
+include requirements.txt
+
+# Include package data
+recursive-include pymotivaxmc2 *.py
+
+# Exclude git files
+exclude .gitignore
+exclude .gitattributes
+exclude .git/
+exclude .git*
+
+# Exclude test files and directories
+exclude test_command.py
+exclude pymotivaxmc2_demo.ipynb
+exclude tests/
+recursive-exclude tests *
+
+# Exclude virtual environments
+exclude venv/
+exclude env/
+exclude .env/
+exclude bin/
+exclude include/
+exclude lib/
+exclude lib64/
+exclude pyvenv.cfg
+
+# Exclude IDE folders
+exclude .idea/
+exclude .vscode/
+
+# Exclude distribution files
+exclude dist/
+exclude build/
+exclude *.egg-info/ 

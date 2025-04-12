@@ -1,5 +1,5 @@
 """
-Setup script for the pymotiva package.
+Setup script for the pymotivaxmc2 package.
 """
 
 from setuptools import setup, find_packages
@@ -9,16 +9,17 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="pymotivaxmc2",
-    version="0.1.0",
+    version="0.2.0",
     author="Dima Zavin, Dmitri Romanovskij",
     author_email="dmitri.romanovski@gmail.com",
     description="A Python library for controlling eMotiva A/V receivers, tested with XMC-2",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/droman42/pymotivaxmc2",
-    packages=find_packages(),
+    packages=find_packages(exclude=["tests", "*.tests", "*.tests.*", "venv", "env", ".env"]),
+    include_package_data=True,
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",

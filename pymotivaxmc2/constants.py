@@ -19,6 +19,9 @@ PROTOCOL_VERSION = "3.1"
 DEFAULT_KEEPALIVE_INTERVAL = 10000  # 10 seconds
 MAX_MISSED_KEEPALIVES = 3
 
+# Commands
+QUERY_INPUT_NAMES = "query_input_names"
+
 # Notification events
 NOTIFY_EVENTS = {
     'power',

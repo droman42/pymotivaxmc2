@@ -50,6 +50,7 @@ class Emotiva:
         _last_keepalive (datetime): Timestamp of last keepalive received
         _missed_keepalives (int): Number of missed keepalives
         _sequence_number (int): Current sequence number for notifications
+        _input_mappings (Dict[str, str]): Mapping of custom input names to standard input identifiers
     """
     
     def __init__(self, config: EmotivaConfig) -> None:
@@ -69,12 +70,50 @@ class Emotiva:
         self._last_keepalive: Optional[datetime] = None
         self._missed_keepalives: int = 0
         self._sequence_number: int = 0
+        self._input_mappings: Dict[str, str] = {}
         
         _LOGGER.debug("Initialized with ip: %s, timeout: %d", self._ip, self._timeout)
 
-    def discover(self) -> int:
+    def _query_input_names(self, custom_mappings: Optional[Dict[str, str]] = None) -> None:
+        """
+        Initialize input mappings with default values and optionally add custom mappings.
+        
+        Args:
+            custom_mappings (Optional[Dict[str, str]]): Optional dictionary of custom input name mappings.
+                Keys should be standard input identifiers, values should be custom names.
+                If None, only default mappings will be used.
+        
+        This method sets up the initial mappings between standard input identifiers
+        and their display names. Custom names can be provided through the custom_mappings
+        parameter or added later through set_input or set_source methods.
+        """
+        # Initialize with default mappings
+        for input_id, display_name in INPUT_SOURCES.items():
+            self._input_mappings[input_id] = display_name
+            self._input_mappings[display_name] = input_id
+            
+        # Add custom mappings if provided
+        if custom_mappings is not None:
+            for input_id, custom_name in custom_mappings.items():
+                if input_id in INPUT_SOURCES:
+                    self._input_mappings[input_id] = custom_name
+                    self._input_mappings[custom_name] = input_id
+                else:
+                    _LOGGER.warning(
+                        "Ignoring custom mapping for unknown input identifier: %s",
+                        input_id
+                    )
+            
+        _LOGGER.debug("Input mappings initialized: %s", self._input_mappings)
+
+    def discover(self, custom_mappings: Optional[Dict[str, str]] = None) -> int:
         """
         Discover the Emotiva device and get its transponder port.
+        
+        Args:
+            custom_mappings (Optional[Dict[str, str]]): Optional dictionary of custom input name mappings.
+                Keys should be standard input identifiers, values should be custom names.
+                If None, only default mappings will be used.
         
         This method sends a discovery request to the device and waits for a response
         containing the transponder port number that will be used for subsequent commands.
@@ -135,6 +174,9 @@ class Emotiva:
             else:
                 _LOGGER.error("Missing control information in discovery response")
                 raise InvalidTransponderResponseError('Missing control information in discovery response')
+
+            # Initialize input mappings with optional custom mappings
+            self._query_input_names(custom_mappings)
 
             _LOGGER.info("Successfully discovered device %s on port %d", self._ip, self._transponder_port)
             return self._transponder_port
@@ -298,6 +340,7 @@ class Emotiva:
         
         Args:
             input_source (str): Input source to set (e.g., 'hdmi1', 'coax1', etc.)
+                              Can be either a standard input identifier or a custom name
             
         Returns:
             Dict[str, Any]: Command response
@@ -306,10 +349,21 @@ class Emotiva:
             InvalidSourceError: If the specified input source is not valid
             InvalidTransponderResponseError: If the device is not discovered or response is invalid
         """
-        if input_source not in INPUT_SOURCES:
-            raise InvalidSourceError(f"Invalid input source: {input_source}. Valid sources are: {list(INPUT_SOURCES.keys())}")
+        # First check if it's a standard input identifier
+        if input_source in INPUT_SOURCES:
+            return self.send_command(input_source, {"value": 0})
             
-        return self.send_command(input_source, {"value": 0})
+        # If not a standard input, check if we have a mapping for it
+        if input_source in self._input_mappings:
+            input_id = self._input_mappings[input_source]
+            if input_id in INPUT_SOURCES:
+                return self.send_command(input_id, {"value": 0})
+            
+        # If we get here, it's neither a standard input nor a mapped custom name
+        raise InvalidSourceError(
+            f"Invalid input source: {input_source}. "
+            f"Valid sources are: {list(INPUT_SOURCES.keys())}"
+        )
         
     def set_source(self, source: str) -> Dict[str, Any]:
         """
@@ -317,6 +371,7 @@ class Emotiva:
         
         Args:
             source (str): Source to set (e.g., 'hdmi1', 'coax1', etc.)
+                        Can be either a standard input identifier or a custom name
             
         Returns:
             Dict[str, Any]: Command response
@@ -325,10 +380,21 @@ class Emotiva:
             InvalidSourceError: If the specified source is not valid
             InvalidTransponderResponseError: If the device is not discovered or response is invalid
         """
-        if source not in INPUT_SOURCES:
-            raise InvalidSourceError(f"Invalid source: {source}. Valid sources are: {list(INPUT_SOURCES.keys())}")
+        # First check if it's a standard input identifier
+        if source in INPUT_SOURCES:
+            return self.send_command("source", {"value": source})
             
-        return self.send_command("source", {"value": source})
+        # If not a standard input, check if we have a mapping for it
+        if source in self._input_mappings:
+            input_id = self._input_mappings[source]
+            if input_id in INPUT_SOURCES:
+                return self.send_command("source", {"value": input_id})
+            
+        # If we get here, it's neither a standard input nor a mapped custom name
+        raise InvalidSourceError(
+            f"Invalid source: {source}. "
+            f"Valid sources are: {list(INPUT_SOURCES.keys())}"
+        )
         
     def set_movie_mode(self) -> Dict[str, Any]:
         """

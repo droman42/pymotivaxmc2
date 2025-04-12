@@ -106,6 +106,12 @@ emotiva = Emotiva(config)
 # Discover the device
 discovery_result = emotiva.discover()
 
+# Power control
+emotiva.set_power_on()    # Turn main zone on
+emotiva.set_power_off()   # Turn main zone off
+emotiva.toggle_power()    # Toggle main zone power
+emotiva.get_power()       # Get current main zone power status
+
 # Source/Input Selection
 # Method 1: Using legacy methods (backward compatibility)
 emotiva.set_source('hdmi1')
@@ -153,20 +159,48 @@ emotiva.update_properties([
 The package includes a command-line interface for basic operations:
 
 ```bash
+# Device Discovery
+emotiva-cli discover --ip 192.168.1.100
+
 # Get device status
 emotiva-cli status --ip 192.168.1.100
 
-# Power on the device
+# Power control
 emotiva-cli power on --ip 192.168.1.100
+emotiva-cli power off --ip 192.168.1.100
+emotiva-cli power toggle --ip 192.168.1.100
+emotiva-cli power status --ip 192.168.1.100
 
-# Set volume
-emotiva-cli volume -40 --ip 192.168.1.100
+# Query specific information
+emotiva-cli query power --ip 192.168.1.100
+emotiva-cli query zone2_power --ip 192.168.1.100
+emotiva-cli query input --ip 192.168.1.100
+emotiva-cli query mode --ip 192.168.1.100
+emotiva-cli query custom power volume input --ip 192.168.1.100
 
-# Change source
+# Volume control
+emotiva-cli volume -40 --ip 192.168.1.100  # Set absolute volume
+emotiva-cli volume +1 --ip 192.168.1.100   # Increase volume by 1dB
+emotiva-cli volume -1 --ip 192.168.1.100   # Decrease volume by 1dB
+
+# Input/Source selection (legacy methods)
 emotiva-cli source hdmi1 --ip 192.168.1.100
+emotiva-cli input hdmi1 --ip 192.168.1.100
 
-# Control Zone 2
+# Enhanced source selection
+emotiva-cli hdmi 1 --ip 192.168.1.100      # Switch to HDMI 1 (recommended for HDMI)
+emotiva-cli switch analog1 --ip 192.168.1.100  # Switch to any source (enhanced method)
+
+# Audio modes
+emotiva-cli mode stereo --ip 192.168.1.100
+emotiva-cli mode_dolby --ip 192.168.1.100
+emotiva-cli mode_dts --ip 192.168.1.100
+emotiva-cli mode_movie --ip 192.168.1.100
+
+# Zone 2 control
 emotiva-cli zone2 power on --ip 192.168.1.100
+emotiva-cli zone2 power off --ip 192.168.1.100
+emotiva-cli zone2 power toggle --ip 192.168.1.100
 emotiva-cli zone2 volume -30 --ip 192.168.1.100
 emotiva-cli zone2 source analog1 --ip 192.168.1.100
 ```
@@ -200,6 +234,12 @@ class Emotiva:
     # Core methods
     def discover(timeout: float = 1.0) -> Dict[str, Any]
     def send_command(cmd: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]
+    
+    # Power control
+    def set_power_on() -> Dict[str, Any]
+    def set_power_off() -> Dict[str, Any]
+    def toggle_power() -> Dict[str, Any]
+    def get_power() -> Dict[str, Any]
     
     # Source/Input Selection
     def set_source(source: str) -> Dict[str, Any]  # Legacy method

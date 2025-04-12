@@ -1205,3 +1205,80 @@ class Emotiva:
             task.cancel()
         
         return command_result
+
+    async def set_power_on(self) -> Dict[str, Any]:
+        """
+        Turn on Zone 1 (main zone) power with notification handling.
+        
+        Returns:
+            Dict[str, Any]: Command response with notification handling
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        # Subscribe to notifications first
+        await self.subscribe_to_notifications(["power"])
+        
+        # Use manage_device for command and notification handling
+        return await self.manage_device("power_on", {"value": "0", "ack": "yes"})
+        
+    async def set_power_off(self) -> Dict[str, Any]:
+        """
+        Turn off Zone 1 (main zone) power with notification handling.
+        
+        Returns:
+            Dict[str, Any]: Command response with notification handling
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        # Subscribe to notifications first
+        await self.subscribe_to_notifications(["power"])
+        
+        # Use manage_device for command and notification handling
+        return await self.manage_device("power_off", {"value": "0", "ack": "yes"})
+        
+    async def toggle_power(self) -> Dict[str, Any]:
+        """
+        Toggle Zone 1 (main zone) power with notification handling.
+        
+        Returns:
+            Dict[str, Any]: Command response with notification handling
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        # Subscribe to notifications first
+        await self.subscribe_to_notifications(["power"])
+        
+        # Use manage_device for command and notification handling
+        return await self.manage_device("power", {"value": "0", "ack": "yes"})
+    
+    async def get_power(self) -> Dict[str, Any]:
+        """
+        Get the power status of Zone 1 (main zone) with notification handling.
+        
+        This method sends a request to get the current Zone 1 power status
+        and processes the resulting notifications.
+        
+        Returns:
+            Dict[str, Any]: Command response with notification handling
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        # Check if discovery is complete
+        if not self._discovery_complete:
+            discovery_result = await self.discover()
+            if discovery_result.get("status") != "success":
+                return {"status": "error", "message": "Device discovery failed"}
+        
+        # Subscribe to power notifications if we have a callback
+        if self._callback:
+            await self.subscribe_to_notifications(["power"])
+            
+            # Create a dummy command that will just trigger the power update
+            return await self.manage_device("power", {"ack": "no"})
+        else:
+            # Just request power update without notification handling
+            return await self.update_properties(["power"])

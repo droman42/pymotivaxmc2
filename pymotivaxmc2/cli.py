@@ -138,58 +138,84 @@ def main() -> int:
         emotiva.set_callback(handle_notification)
         
         if args.command == "discover":
-            port = emotiva.discover()
-            print(f"Device discovered on port {port}")
+            discovery_result = emotiva.discover()
+            if discovery_result.get("status") == "success":
+                print(f"Device discovered successfully:")
+                print(f"  IP: {discovery_result.get('ip')}")
+                print(f"  Port: {discovery_result.get('port')}")
+                if "device_info" in discovery_result:
+                    print(f"  Device info: {discovery_result.get('device_info')}")
+                return 0
+            else:
+                print(f"Discovery failed: {discovery_result.get('message')}")
+                return 1
             
         elif args.command == "power":
-            emotiva.discover()  # Ensure device is discovered
+            # Ensure device is discovered first
+            discovery_result = emotiva.discover()
+            if discovery_result.get("status") != "success":
+                print(f"Discovery failed: {discovery_result.get('message')}")
+                return 1
+                
             response = emotiva.send_command("power", {"value": args.state})
             print(f"Power command response: {response}")
             
         elif args.command == "volume":
-            emotiva.discover()  # Ensure device is discovered
+            # Ensure device is discovered first
+            discovery_result = emotiva.discover()
+            if discovery_result.get("status") != "success":
+                print(f"Discovery failed: {discovery_result.get('message')}")
+                return 1
+                
             response = emotiva.send_command("volume", {"value": args.level})
             print(f"Volume command response: {response}")
             
         elif args.command == "mode":
-            emotiva.discover()  # Ensure device is discovered
+            # Ensure device is discovered first
+            discovery_result = emotiva.discover()
+            if discovery_result.get("status") != "success":
+                print(f"Discovery failed: {discovery_result.get('message')}")
+                return 1
+                
             response = emotiva.set_mode(args.mode)
             print(f"Mode command response: {response}")
             
         elif args.command == "input":
-            emotiva.discover()  # Ensure device is discovered
+            # Ensure device is discovered first
+            discovery_result = emotiva.discover()
+            if discovery_result.get("status") != "success":
+                print(f"Discovery failed: {discovery_result.get('message')}")
+                return 1
+                
             response = emotiva.set_input(args.source)
             print(f"Input command response: {response}")
             
         elif args.command == "source":
-            emotiva.discover()  # Ensure device is discovered
+            # Ensure device is discovered first
+            discovery_result = emotiva.discover()
+            if discovery_result.get("status") != "success":
+                print(f"Discovery failed: {discovery_result.get('message')}")
+                return 1
+                
             response = emotiva.set_source(args.source)
             print(f"Source command response: {response}")
             
         elif args.command.startswith("mode_"):
             mode = args.command[5:]  # Remove "mode_" prefix
-            emotiva.discover()  # Ensure device is discovered
+            # Ensure device is discovered first
+            discovery_result = emotiva.discover()
+            if discovery_result.get("status") != "success":
+                print(f"Discovery failed: {discovery_result.get('message')}")
+                return 1
+                
             response = emotiva.set_mode(mode)
             print(f"Mode command response: {response}")
             
-        else:
-            print("No command specified. Use --help for usage information.")
-            return 1
-            
-    except InvalidTransponderResponseError as e:
-        _LOGGER.error("Device communication error: %s", e)
-        return 1
-    except InvalidSourceError as e:
-        _LOGGER.error("Invalid source error: %s", e)
-        return 1
-    except InvalidModeError as e:
-        _LOGGER.error("Invalid mode error: %s", e)
-        return 1
-    except Error as e:
-        _LOGGER.error("Error: %s", e)
-        return 1
+        return 0
         
-    return 0
+    except Exception as e:
+        print(f"Error: {e}")
+        return 1
 
 if __name__ == "__main__":
     sys.exit(main()) 

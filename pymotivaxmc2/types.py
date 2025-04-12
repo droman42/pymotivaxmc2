@@ -27,6 +27,7 @@ class EmotivaConfig:
         timeout: int = 2,
         discover_request_port: int = 7000,
         discover_response_port: int = 7001,
+        notify_port: int = 7003,  # Port for device notifications
         max_retries: int = 3,
         retry_delay: float = 1.0,
         keepalive_interval: int = DEFAULT_KEEPALIVE_INTERVAL,
@@ -40,6 +41,7 @@ class EmotivaConfig:
             timeout (int): Socket timeout in seconds
             discover_request_port (int): Port for discovery requests
             discover_response_port (int): Port for discovery responses
+            notify_port (int): Port for device notifications
             max_retries (int): Maximum number of retries for failed operations
             retry_delay (float): Delay between retries in seconds
             keepalive_interval (int): Expected keepalive interval in milliseconds
@@ -49,6 +51,7 @@ class EmotivaConfig:
         self.timeout = timeout
         self.discover_request_port = discover_request_port
         self.discover_response_port = discover_response_port
+        self.notify_port = notify_port
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.keepalive_interval = keepalive_interval

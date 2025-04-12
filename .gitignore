@@ -27,3 +27,4 @@ lib64
 
 # Misc
 .DS_Store
+test_command.py

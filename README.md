@@ -8,6 +8,8 @@ It was tested to work with eMotiva XMC-2. Original functionality should still wo
 
 - Control eMotiva A/V receivers over the network
 - Support for various commands (power, volume, source selection, etc.)
+- Multi-zone control with dedicated Zone 2 methods
+- Property subscription and notification handling
 - Asynchronous operation
 - Command-line interface
 - Type hints and modern Python features
@@ -93,25 +95,56 @@ Troubleshooting:
 ```python
 from pymotivaxmc2 import Emotiva, EmotivaConfig
 
+# Basic initialization and control
 # Create a configuration
-config = EmotivaConfig(
-    host="192.168.1.100",  # Your Emotiva device's IP address
-    port=7025             # Default port for Emotiva devices
-)
+config = EmotivaConfig(ip="192.168.1.100")
 
 # Create an instance
 emotiva = Emotiva(config)
 
-# Connect to the device
-await emotiva.connect()
+# Discover the device
+discovery_result = emotiva.discover()
 
-# Send commands
-await emotiva.power_on()
-await emotiva.set_volume(-40)  # Volume in dB
-await emotiva.set_source("XLR1")
+# Source/Input Selection
+# Method 1: Using legacy methods (backward compatibility)
+emotiva.set_source('hdmi1')
+emotiva.set_input('hdmi1')
 
-# Disconnect when done
-await emotiva.disconnect()
+# Method 2: Enhanced direct HDMI selection with multiple methods (recommended)
+emotiva.switch_to_hdmi(1)  # Tries multiple methods to set both video and audio to HDMI 1
+
+# Method 3: Using any source command from API specification section 4.1
+emotiva.switch_to_source('hdmi1')      # HDMI inputs (same as switch_to_hdmi)
+emotiva.switch_to_source('analog1')    # Analog inputs
+emotiva.switch_to_source('optical2')   # Digital inputs
+emotiva.switch_to_source('tuner')      # Tuner
+emotiva.switch_to_source('source_tuner')  # Alternative tuner command format
+
+# Other commands
+emotiva.set_volume(1)  # Increase volume by 1dB
+
+# Zone 2 Control
+emotiva.get_zone2_power()  # Request Zone 2 power status via notification
+emotiva.set_zone2_power_on()  # Turn on Zone 2
+emotiva.set_zone2_power_off()  # Turn off Zone 2
+emotiva.toggle_zone2_power()  # Toggle Zone 2 power
+
+# Property Subscriptions and Updates
+# Set up a callback to receive notifications
+def handle_notification(data):
+    print(f"Notification received: {data}")
+    
+emotiva.set_callback(handle_notification)
+
+# Subscribe to specific properties
+emotiva.subscribe_to_notifications([
+    "power", "zone2_power", "volume", "source"
+])
+
+# Request updates for specific properties
+emotiva.update_properties([
+    "power", "zone2_power", "volume", "source"
+])
 ```
 
 ### Command Line Interface
@@ -120,16 +153,21 @@ The package includes a command-line interface for basic operations:
 
 ```bash
 # Get device status
-emotiva-cli status --host 192.168.1.100
+emotiva-cli status --ip 192.168.1.100
 
 # Power on the device
-emotiva-cli power on --host 192.168.1.100
+emotiva-cli power on --ip 192.168.1.100
 
 # Set volume
-emotiva-cli volume -40 --host 192.168.1.100
+emotiva-cli volume -40 --ip 192.168.1.100
 
 # Change source
-emotiva-cli source XLR1 --host 192.168.1.100
+emotiva-cli source hdmi1 --ip 192.168.1.100
+
+# Control Zone 2
+emotiva-cli zone2 power on --ip 192.168.1.100
+emotiva-cli zone2 volume -30 --ip 192.168.1.100
+emotiva-cli zone2 source analog1 --ip 192.168.1.100
 ```
 
 ## API Reference
@@ -142,9 +180,13 @@ Configuration class for Emotiva devices:
 
 ```python
 class EmotivaConfig:
-    host: str          # Device IP address
-    port: int = 7025   # Device port (default: 7025)
-    timeout: int = 5   # Connection timeout in seconds
+    ip: str           # Device IP address
+    timeout: int = 5  # Connection timeout in seconds
+    discover_request_port: int = 7000  # Port for discovery requests
+    discover_response_port: int = 7001  # Port for discovery responses
+    notify_port: int = 7003  # Port for notifications
+    max_retries: int = 3  # Maximum number of retry attempts
+    keepalive_interval: int = 10000  # Keepalive interval in milliseconds
 ```
 
 #### Emotiva
@@ -153,14 +195,82 @@ Main class for device control:
 
 ```python
 class Emotiva:
-    async def connect() -> None
-    async def disconnect() -> None
-    async def power_on() -> None
-    async def power_off() -> None
-    async def set_volume(volume_db: float) -> None
-    async def set_source(source: str) -> None
-    async def get_status() -> dict
+    # Core methods
+    def discover(timeout: float = 1.0) -> Dict[str, Any]
+    def send_command(cmd: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]
+    
+    # Source/Input Selection
+    def set_source(source: str) -> Dict[str, Any]  # Legacy method
+    def set_input(input_source: str) -> Dict[str, Any]  # Legacy method
+    
+    # Enhanced Source/Input Selection (recommended)
+    def switch_to_hdmi(hdmi_number: int) -> Dict[str, Any]  # Specifically for HDMI inputs
+    def switch_to_source(source_command: str) -> Dict[str, Any]  # For any input type
+    
+    # Audio Mode control
+    def set_mode(mode: str) -> Dict[str, Any]
+    
+    # Zone 2 control
+    def get_zone2_power() -> Dict[str, Any]
+    def set_zone2_power_on() -> Dict[str, Any]
+    def set_zone2_power_off() -> Dict[str, Any]
+    def toggle_zone2_power() -> Dict[str, Any]
+    
+    # Notification handling
+    def set_callback(callback: Optional[Callable[[Dict[str, Any]], None]]) -> None
+    def subscribe_to_notifications(event_types: Optional[List[str]] = None) -> Dict[str, Any]
+    def update_properties(properties: List[str]) -> Dict[str, Any]
 ```
+
+## Input Source Selection
+
+This library provides multiple methods for input source selection, with enhanced methods that better follow the API specification:
+
+### Legacy Methods (Basic)
+- `set_source(source)` - Sets the source using a string identifier
+- `set_input(input_source)` - Alternative method for setting the input source
+
+### Enhanced Methods (Recommended)
+- `switch_to_hdmi(hdmi_number)` - HDMI-specific method that tries multiple approaches to set both video and audio inputs to the specified HDMI port (1-8). This method is optimized for reliable HDMI switching.
+
+- `switch_to_source(source_command)` - General-purpose method that accepts any source command from the API specification (section 4.1), such as:
+  - `hdmi1` through `hdmi8` (will use specialized HDMI switching)
+  - `analog1` through `analog5`
+  - `optical1` through `optical4`
+  - `coax1` through `coax4`
+  - `tuner`
+  - `source_tuner`
+  - `source_1` through `source_8`
+  - `ARC`
+  - `usb_stream`
+
+The enhanced methods handle proper notification subscription and provide detailed response information.
+
+## Working with Notifications
+
+The library supports subscribing to notifications from the device and receiving updates when properties change. Here are some key notification properties you can subscribe to:
+
+### Zone 1 Properties
+- `power` - Zone 1 power status ("On"/"Off")
+- `volume` - Zone 1 volume level in dB
+- `source` - Current input source
+- `mode` - Current audio processing mode
+
+### Zone 2 Properties
+- `zone2_power` - Zone 2 power status ("On"/"Off")
+- `zone2_volume` - Zone 2 volume level in dB
+- `zone2_input` - Zone 2 input source
+- `zone2_mute` - Zone 2 mute status
+
+### Audio/Video Properties
+- `audio_input` - Current audio input
+- `audio_bitstream` - Audio bitstream format
+- `audio_bits` - Audio bit depth and sample rate
+- `video_input` - Current video input
+- `video_format` - Video format
+- `video_space` - Color space
+
+A full list of available notification properties can be found in the Emotiva Remote Interface Description document.
 
 ## Contributing
 

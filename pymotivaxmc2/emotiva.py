@@ -77,41 +77,8 @@ class Emotiva:
         self._last_keepalive = time.time()
         self._missed_keepalives = 0
         self._sequence_number = 0
-        self._input_mappings = {}
         
         _LOGGER.debug("Initialized with ip: %s, timeout: %d", self._ip, self._timeout)
-
-    def _query_input_names(self, custom_mappings: Optional[Dict[str, str]] = None) -> None:
-        """
-        Initialize input mappings with default values and optionally add custom mappings.
-        
-        Args:
-            custom_mappings (Optional[Dict[str, str]]): Optional dictionary of custom input name mappings.
-                Keys should be standard input identifiers, values should be custom names.
-                If None, only default mappings will be used.
-        
-        This method sets up the initial mappings between standard input identifiers
-        and their display names. Custom names can be provided through the custom_mappings
-        parameter or added later through set_input or set_source methods.
-        """
-        # Initialize with default mappings
-        for input_id, display_name in INPUT_SOURCES.items():
-            self._input_mappings[input_id] = display_name
-            self._input_mappings[display_name] = input_id
-            
-        # Add custom mappings if provided
-        if custom_mappings is not None:
-            for input_id, custom_name in custom_mappings.items():
-                if input_id in INPUT_SOURCES:
-                    self._input_mappings[input_id] = custom_name
-                    self._input_mappings[custom_name] = input_id
-                else:
-                    _LOGGER.warning(
-                        "Ignoring custom mapping for unknown input identifier: %s",
-                        input_id
-                    )
-            
-        _LOGGER.debug("Input mappings initialized: %s", self._input_mappings)
 
     def discover(self, timeout: float = 1.0) -> Dict[str, Any]:
         """
@@ -286,7 +253,7 @@ class Emotiva:
         Args:
             data (bytes): Raw notification data from the device
         """
-        _LOGGER.debug("Received notification from %s: %s", self._ip, data)
+        _LOGGER.debug("Received notification from %s", self._ip)
         doc = parse_response(data)
         
         if doc is None:
@@ -318,6 +285,8 @@ class Emotiva:
                             self._last_keepalive = datetime.now()
                             self._missed_keepalives = 0
                         changed[prop_name] = el.attrib
+                    else:
+                        _LOGGER.warning("Received property %s not in NOTIFY_EVENTS", prop_name)
                 elif el.tag in NOTIFY_EVENTS:
                     # Handle legacy format
                     if el.tag == 'keepalive':
@@ -326,13 +295,11 @@ class Emotiva:
                     changed[el.tag] = el.attrib
                     
             if changed and self._callback:
-                _LOGGER.debug("Processing state changes for %s: %s", self._ip, changed)
                 self._callback(changed)
                 
         elif doc.tag == 'emotivaMenuNotify' or doc.tag == 'emotivaBarNotify':
             # Handle other notification types if needed
             _LOGGER.debug("Received %s message from %s", doc.tag, self._ip)
-            # Process these notification types as needed
             
         else:
             _LOGGER.warning("Received unknown message type from %s: %s", self._ip, doc.tag)
@@ -356,10 +323,25 @@ class Emotiva:
                 _LOGGER.error("Failed to discover device: %s", discovery_result.get("message"))
                 return {"status": "error", "message": f"Device discovery failed: {discovery_result.get('message')}"}
         
-        # Format the command request
-        # Wrap the command in emotivaControl
-        request = format_request('emotivaControl', {cmd: params or {}})
-        _LOGGER.debug("Sending command to %s: %s", self._ip, request)
+        # Format the command request by directly creating XML
+        # according to the specification format
+        root = ET.Element("emotivaControl")
+        
+        # Create the command element with attributes
+        cmd_element = ET.SubElement(root, cmd)
+        
+        # Add parameters as attributes
+        if params:
+            for key, value in params.items():
+                cmd_element.set(key, str(value))
+                
+        # Ensure "value" attribute is present
+        if params and "value" not in params:
+            cmd_element.set("value", "0")
+        
+        # Convert to XML string
+        xml_declaration = '<?xml version="1.0" encoding="utf-8"?>\n'
+        request = xml_declaration.encode('utf-8') + ET.tostring(root, encoding='utf-8')
         
         # Send the command
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -369,31 +351,48 @@ class Emotiva:
             # Send the request
             sock.sendto(request, (self._ip, self._transponder_port))
             
-            # Briefly wait for response, but don't require it
-            try:
-                data, _ = sock.recvfrom(4096)
-                _LOGGER.debug("Received command response: %s", data.decode('utf-8', errors='replace'))
-                
-                # Parse the response
+            # Wait for response if acknowledgment was requested
+            ack_requested = params and params.get("ack", "").lower() == "yes"
+            
+            if ack_requested:
                 try:
-                    doc = parse_response(data)
-                    if doc is not None:
-                        # Check for error response
-                        if doc.tag == 'Error':
-                            error_message = doc.text if doc.text else "Unknown error"
-                            _LOGGER.error("Error response: %s", error_message)
-                            return {"status": "error", "message": error_message}
-                        
-                        # Success response
-                        return {"status": "success", "response": extract_attributes(doc)}
-                except Exception as e:
-                    _LOGGER.error("Error parsing command response: %s", e)
-                    return {"status": "error", "message": f"Error parsing command response: {e}"}
-                
-            except socket.timeout:
-                # Many commands don't receive an explicit acknowledgment,
-                # but state changes will be reflected in notification messages
-                _LOGGER.debug("No immediate response received - this is normal for many commands")
+                    data, _ = sock.recvfrom(4096)
+                    
+                    # Parse the response
+                    try:
+                        doc = parse_response(data)
+                        if doc is not None:
+                            # Check for error response
+                            if doc.tag == 'Error':
+                                error_message = doc.text if doc.text else "Unknown error"
+                                _LOGGER.error("Error response: %s", error_message)
+                                return {"status": "error", "message": error_message}
+                            
+                            # Success response
+                            if doc.tag == 'emotivaAck':
+                                # Extract command acknowledgment
+                                for child in doc:
+                                    if child.tag == cmd:
+                                        status = child.get('status')
+                                        if status == 'ack':
+                                            return {"status": "success", "message": f"Command {cmd} acknowledged"}
+                                        else:
+                                            return {"status": "error", "message": f"Command {cmd} not acknowledged"}
+                                
+                                return {"status": "unknown", "message": "Received acknowledgment but couldn't find command status"}
+                            
+                            # Other response type
+                            return {"status": "received", "response": str(doc)}
+                            
+                    except Exception as e:
+                        _LOGGER.error("Error parsing command response: %s", e)
+                        return {"status": "error", "message": f"Error parsing command response: {e}"}
+                    
+                except socket.timeout:
+                    _LOGGER.warning("Timeout waiting for command acknowledgment")
+                    return {"status": "timeout", "message": "No acknowledgment received within timeout period"}
+            else:
+                # Don't wait for acknowledgment if not requested
                 return {
                     "status": "sent", 
                     "message": "Command sent successfully. State changes will be reflected in notifications."
@@ -598,13 +597,97 @@ class Emotiva:
         """
         return self.send_command("surround_mode", {"value": 0})
 
+    def get_zone2_power(self) -> Dict[str, Any]:
+        """
+        Get the current Zone 2 power status.
+        
+        This method sends an update request for the zone2_power property,
+        which will trigger a notification if subscribed.
+        
+        Returns:
+            Dict[str, Any]: Update response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        # Send an update request for zone2_power
+        update_data = {}
+        
+        # Create XML structure for update
+        root = ET.Element("emotivaUpdate")
+        root.set("protocol", PROTOCOL_VERSION)
+        
+        # Add zone2_power element
+        ET.SubElement(root, "zone2_power")
+        
+        # Convert to XML string with XML declaration
+        xml_declaration = '<?xml version="1.0" encoding="utf-8"?>\n'
+        request = xml_declaration.encode('utf-8') + ET.tostring(root, encoding='utf-8')
+        
+        try:
+            # Create socket for sending
+            send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            send_sock.settimeout(self._timeout)
+            
+            # Send request
+            send_sock.sendto(request, (self._ip, self._transponder_port))
+            send_sock.close()
+            
+            return {
+                "status": "sent", 
+                "message": "Zone 2 power update request sent. Current status will be delivered via notification."
+            }
+            
+        except Exception as e:
+            _LOGGER.error("Error sending Zone 2 power update request: %s", e)
+            return {"status": "error", "message": str(e)}
+    
+    def set_zone2_power_on(self) -> Dict[str, Any]:
+        """
+        Turn on Zone 2 power.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        # Based on specification, use "value": "0" format, ensure acknowledgment
+        return self.send_command("zone2_power_on", {"value": "0", "ack": "yes"})
+    
+    def set_zone2_power_off(self) -> Dict[str, Any]:
+        """
+        Turn off Zone 2 power.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        # Based on specification, use "value": "0" format, ensure acknowledgment
+        return self.send_command("zone2_power_off", {"value": "0", "ack": "yes"})
+    
+    def toggle_zone2_power(self) -> Dict[str, Any]:
+        """
+        Toggle Zone 2 power state.
+        
+        Returns:
+            Dict[str, Any]: Command response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        # Based on specification, use "value": "0" format, ensure acknowledgment
+        return self.send_command("zone2_power", {"value": "0", "ack": "yes"})
+
     def subscribe_to_notifications(self, event_types: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Subscribe to device notifications.
         
         Args:
             event_types: Optional list of event types to subscribe to
-                        (default is ["emotivaStateNotify"])
+                        (default includes common ones like power, volume, etc.)
                     
         Returns:
             Dict with subscription result
@@ -615,18 +698,31 @@ class Emotiva:
             if discovery_result.get("status") != "success":
                 return {"status": "error", "message": f"Device discovery failed: {discovery_result.get('message')}"}
         
-        # Default to state notifications if not specified
+        # Default to common notifications if not specified
         if not event_types:
-            event_types = ["emotivaStateNotify"]
+            event_types = ["power", "zone2_power", "volume", "source", "audio_bitstream", "audio_bits", "video_input", "video_format"]
         
-        # Prepare subscription command
-        subscription_data = {}
+        # Create XML structure for subscription
+        root = ET.Element("emotivaSubscription")
+        root.set("protocol", PROTOCOL_VERSION)
+        
+        # Add property elements as per specification
         for event_type in event_types:
-            subscription_data[event_type] = {"enable": "true"}
+            # Handle common property aliases
+            if event_type == "source":
+                # "source" is likely "input" in NOTIFY_EVENTS
+                if "input" in NOTIFY_EVENTS:
+                    ET.SubElement(root, "input")
+                else:
+                    _LOGGER.warning("Cannot map 'source' to a known property")
+            elif event_type in NOTIFY_EVENTS:
+                ET.SubElement(root, event_type)
+            else:
+                _LOGGER.warning("Ignoring unknown notification event type: %s", event_type)
         
-        # Send subscription request - use the emotivaSubscription format
-        request = format_request("emotivaSubscription", subscription_data)
-        _LOGGER.debug("Sending subscription request to %s: %s", self._ip, request)
+        # Convert to XML string with XML declaration
+        xml_declaration = '<?xml version="1.0" encoding="utf-8"?>\n'
+        request = xml_declaration.encode('utf-8') + ET.tostring(root, encoding='utf-8')
         
         try:
             # Create socket for sending
@@ -703,9 +799,6 @@ class Emotiva:
                 # Wait for data with timeout
                 data, addr = self._listener_socket.recvfrom(4096)
                 if addr[0] == self._ip:
-                    _LOGGER.debug("Received notification from %s: %s", 
-                                 self._ip, data.decode('utf-8', errors='replace'))
-                    
                     # Process the notification in the main thread to avoid threading issues
                     self._handle_notify(data)
             except socket.timeout:
@@ -735,3 +828,234 @@ class Emotiva:
                 _LOGGER.warning("Notification listener thread did not exit cleanly for %s", self._ip)
         
         self._listener_thread = None
+        
+    def update_properties(self, properties: List[str]) -> Dict[str, Any]:
+        """
+        Request updates for specific properties.
+        
+        This method sends an update request for the specified properties,
+        which will trigger notifications if subscribed.
+        
+        Args:
+            properties: List of property names to update
+            
+        Returns:
+            Dict[str, Any]: Update response
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        # Check if discovery is complete
+        if not self._discovery_complete:
+            discovery_result = self.discover()
+            if discovery_result.get("status") != "success":
+                return {"status": "error", "message": f"Device discovery failed: {discovery_result.get('message')}"}
+        
+        # Validate and map properties
+        mapped_properties = []
+        for prop in properties:
+            # Handle common property aliases
+            if prop == "source":
+                # "source" is likely "input" in NOTIFY_EVENTS
+                if "input" in NOTIFY_EVENTS:
+                    mapped_properties.append("input")
+                else:
+                    _LOGGER.warning("Cannot map 'source' to a known property")
+            elif prop in NOTIFY_EVENTS:
+                mapped_properties.append(prop)
+            else:
+                _LOGGER.warning("Ignoring unknown property: %s", prop)
+        
+        if not mapped_properties:
+            return {"status": "error", "message": "No valid properties specified for update"}
+        
+        # Create XML structure for update
+        root = ET.Element("emotivaUpdate")
+        root.set("protocol", PROTOCOL_VERSION)
+        
+        # Add property elements
+        for prop in mapped_properties:
+            ET.SubElement(root, prop)
+        
+        # Convert to XML string with XML declaration
+        xml_declaration = '<?xml version="1.0" encoding="utf-8"?>\n'
+        request = xml_declaration.encode('utf-8') + ET.tostring(root, encoding='utf-8')
+        
+        try:
+            # Create socket for sending
+            send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            send_sock.settimeout(self._timeout)
+            
+            # Send request
+            send_sock.sendto(request, (self._ip, self._transponder_port))
+            send_sock.close()
+            
+            return {
+                "status": "sent", 
+                "message": f"Update request sent for {len(mapped_properties)} properties. Current values will be delivered via notification."
+            }
+            
+        except Exception as e:
+            _LOGGER.error("Error sending update request: %s", e)
+            return {"status": "error", "message": str(e)}
+
+    def switch_to_hdmi(self, hdmi_number: int) -> Dict[str, Any]:
+        """
+        Switch to a specific HDMI source using commands from API spec section 4.1.
+        
+        This method tries multiple approaches to set both video and audio inputs 
+        to the specified HDMI input:
+        1. First tries the direct hdmiX command
+        2. Then tries the source_X command
+        3. Then tries setting source with hdmiX value
+        
+        Each attempt is followed by checking if both video and audio inputs changed.
+        
+        Args:
+            hdmi_number (int): The HDMI input number (1-8)
+            
+        Returns:
+            Dict[str, Any]: Command response with result status
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+        """
+        # Validate HDMI number
+        if not 1 <= hdmi_number <= 8:
+            return {"status": "error", "message": f"Invalid HDMI input: {hdmi_number}. Must be between 1 and 8."}
+            
+        # Check if discovery is complete
+        if not self._discovery_complete:
+            discovery_result = self.discover()
+            if discovery_result.get("status") != "success":
+                return {"status": "error", "message": "Device discovery failed"}
+        
+        # Subscribe to necessary notifications if not already subscribed
+        self.subscribe_to_notifications(["audio_input", "video_input"])
+        
+        # Get the input name from our mappings
+        input_id = f"hdmi{hdmi_number}"
+        input_name = INPUT_SOURCES.get(input_id, f"HDMI {hdmi_number}")
+        
+        _LOGGER.debug("Attempting to set input to %s", input_name)
+        
+        # Method 1: Try direct hdmiX command
+        _LOGGER.debug("Trying direct hdmi%d command", hdmi_number)
+        result1 = self.send_command(f"hdmi{hdmi_number}", {"value": "0"})
+        
+        # Check if successful by requesting updates
+        self.update_properties(["video_input", "audio_input"])
+        time.sleep(2)  # Give time for notifications to arrive
+        
+        # Method 2: Try source_X command
+        _LOGGER.debug("Trying source_%d command", hdmi_number)
+        result2 = self.send_command(f"source_{hdmi_number}", {"value": "0"})
+        
+        # Check if successful by requesting updates
+        self.update_properties(["video_input", "audio_input"])
+        time.sleep(2)  # Give time for notifications to arrive
+        
+        # Method 3: Try source with hdmiX value
+        _LOGGER.debug("Trying source with hdmi%d value", hdmi_number)
+        result3 = self.send_command("source", {"value": f"hdmi{hdmi_number}"})
+        
+        # Check if successful by requesting updates
+        self.update_properties(["video_input", "audio_input"])
+        time.sleep(2)  # Give time for notifications to arrive
+        
+        # Method 4: Try separate video_input and audio_input commands
+        _LOGGER.debug("Trying separate video_input and audio_input commands")
+        video_result = self.send_command("video_input", {"value": f"hdmi{hdmi_number}"})
+        time.sleep(1)
+        audio_result = self.send_command("audio_input", {"value": f"hdmi{hdmi_number}"})
+        
+        # Final check
+        self.update_properties(["video_input", "audio_input"])
+        
+        return {
+            "status": "complete",
+            "message": f"Attempted to switch to {input_name} using multiple methods",
+            "attempts": [
+                {"method": "hdmi_direct", "result": result1},
+                {"method": "source_number", "result": result2},
+                {"method": "source_value", "result": result3},
+                {"method": "separate_inputs", "result": {"video": video_result, "audio": audio_result}}
+            ]
+        }
+        
+    def switch_to_source(self, source_command: str) -> Dict[str, Any]:
+        """
+        Switch to a specific source using commands from API spec section 4.1.
+        
+        This method accepts any of the source command strings listed in section 4.1
+        of the API specification, such as:
+        - source_tuner
+        - source_1 through source_8
+        - hdmi1 through hdmi8
+        - coax1 through coax4
+        - optical1 through optical4
+        - analog1 through analog5
+        - analog7.1
+        - front_in
+        - ARC
+        - usb_stream
+        - tuner
+        
+        Args:
+            source_command (str): The source command from API spec section 4.1
+                                 (e.g., "source_tuner", "hdmi1", "analog1", etc.)
+            
+        Returns:
+            Dict[str, Any]: Command response with result status
+            
+        Raises:
+            InvalidTransponderResponseError: If the device is not discovered or response is invalid
+            InvalidSourceError: If an invalid source command is provided
+        """
+        # Check if discovery is complete
+        if not self._discovery_complete:
+            discovery_result = self.discover()
+            if discovery_result.get("status") != "success":
+                return {"status": "error", "message": "Device discovery failed"}
+        
+        # Subscribe to necessary notifications if not already subscribed
+        self.subscribe_to_notifications(["audio_input", "video_input"])
+        
+        # Handle the HDMI special case - use our dedicated method
+        if source_command.startswith("hdmi") and len(source_command) > 4:
+            try:
+                hdmi_number = int(source_command[4:])
+                if 1 <= hdmi_number <= 8:
+                    return self.switch_to_hdmi(hdmi_number)
+            except ValueError:
+                pass  # Not a valid hdmi number, continue with general approach
+        
+        # Handle source_X commands
+        if source_command.startswith("source_"):
+            # Check if it's a numbered source (source_1, source_2, etc.)
+            if len(source_command) > 7 and source_command[7:].isdigit():
+                source_num = source_command[7:]
+                command = source_command
+                value = "0"
+            else:
+                # For other source_ commands like source_tuner
+                command = source_command
+                value = "0"
+        else:
+            # For direct commands like analog1, tuner, etc.
+            command = source_command
+            value = "0"
+        
+        _LOGGER.debug("Switching to source using command: %s, value: %s", command, value)
+        
+        # Send the command
+        result = self.send_command(command, {"value": value})
+        
+        # Request update to confirm the change
+        self.update_properties(["video_input", "audio_input"])
+        
+        return {
+            "status": "complete",
+            "message": f"Attempted to switch to source using {command}",
+            "result": result
+        }

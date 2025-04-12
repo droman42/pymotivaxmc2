@@ -27,6 +27,56 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -e .
 ```
 
+## Device Configuration
+
+Before using this library, ensure your Emotiva device is properly configured for network control:
+
+1. Network Settings:
+   - Connect the device to your local network
+   - Ensure it has a valid IP address (static or DHCP)
+   - Power on the device
+
+2. Protocol Version:
+   - The device defaults to Protocol Version 2.0
+   - This library automatically requests Protocol 3.1 features
+   - No manual configuration needed
+
+3. Port Configuration:
+   - Discovery requests: UDP port 7000
+   - Discovery responses: UDP port 7001
+   - Command communication: Port specified in transponder response (typically 7002)
+   - Notification communication: Port specified in transponder response (typically 7003)
+
+4. Device Settings:
+   - Enable network control in the device's settings menu
+   - Set a friendly name for the device (optional)
+   - Ensure no firewall is blocking the required UDP ports
+
+5. Network Requirements:
+   - Enable UDP broadcast on your network
+   - Keep the device on the same subnet as your control application
+   - Avoid network isolation or VLAN separation that would prevent UDP communication
+
+To verify the device is properly configured:
+```bash
+emotiva-cli discover --ip <device_ip>
+```
+
+If properly configured, you should receive a response with:
+- Model name
+- Revision number
+- Friendly name
+- Protocol version
+- Control port
+- Notification port
+- Keepalive interval
+
+Troubleshooting:
+1. Check the device's network settings
+2. Verify UDP ports 7000-7003 are not blocked
+3. Confirm network control is enabled in device settings
+4. Ensure your network allows UDP broadcast traffic
+
 ## Usage
 
 ### As a Library

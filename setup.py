@@ -9,7 +9,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="pymotivaxmc2",
-    version="0.2.0",
+    version="0.3.0",
     author="Dima Zavin, Dmitri Romanovskij",
     author_email="dmitri.romanovski@gmail.com",
     description="A Python library for controlling eMotiva A/V receivers, tested with XMC-2",
@@ -40,6 +40,7 @@ setup(
         "dev": [
             "pytest>=6.0",
             "pytest-cov>=2.0",
+            "pytest-asyncio>=0.17.0",
             "black>=21.0",
             "mypy>=0.9",
             "flake8>=3.9",

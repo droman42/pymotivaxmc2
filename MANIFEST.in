@@ -2,6 +2,7 @@
 include LICENSE
 include README.md
 include requirements.txt
+exclude async.md
 
 # Include package data
 recursive-include pymotivaxmc2 *.py
@@ -14,6 +15,7 @@ exclude .git*
 
 # Exclude test files and directories
 exclude test_command.py
+exclude test_udp.py
 exclude pymotivaxmc2_demo.ipynb
 exclude tests/
 recursive-exclude tests *

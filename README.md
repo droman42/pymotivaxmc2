@@ -10,7 +10,8 @@ It was tested to work with eMotiva XMC-2. Original functionality should still wo
 - Support for various commands (power, volume, source selection, etc.)
 - Multi-zone control with dedicated Zone 2 methods
 - Property subscription and notification handling
-- Asynchronous operation
+- Asynchronous operation with optimized notification management
+- Efficient resource cleanup and socket handling
 - Command-line interface
 - Type hints and modern Python features
 
@@ -187,6 +188,7 @@ class EmotivaConfig:
     notify_port: int = 7003  # Port for notifications
     max_retries: int = 3  # Maximum number of retry attempts
     keepalive_interval: int = 10000  # Keepalive interval in milliseconds
+    default_subscriptions: Optional[List[str]] = None  # Default notification subscriptions
 ```
 
 #### Emotiva
@@ -220,7 +222,12 @@ class Emotiva:
     def set_callback(callback: Optional[Callable[[Dict[str, Any]], None]]) -> None
     def subscribe_to_notifications(event_types: Optional[List[str]] = None) -> Dict[str, Any]
     def update_properties(properties: List[str]) -> Dict[str, Any]
+    
+    # Resource management
+    def close() -> None  # Clean up resources with timeout handling
 ```
+
+This class now features optimized notification handling with automatic subscription tracking and improved resource cleanup, including timeout protection and graceful shutdown.
 
 ## Input Source Selection
 
@@ -247,6 +254,59 @@ This library provides multiple methods for input source selection, with enhanced
 The enhanced methods handle proper notification subscription and provide detailed response information.
 
 ## Working with Notifications
+
+The library includes an optimized notification system that efficiently manages subscriptions and resource cleanup:
+
+### Automatic Subscription Management
+- Default notifications are configured at initialization time
+- The library automatically tracks which events are already subscribed to
+- Duplicate subscription requests are detected and skipped
+- Subscriptions are set up automatically when a callback is registered
+
+```python
+# Configure default subscriptions during initialization
+config = EmotivaConfig(
+    ip="192.168.1.100",
+    default_subscriptions=["power", "volume", "input", "audio_input", "video_input"]
+)
+
+# Create an instance with optimized notification handling
+emotiva = Emotiva(config)
+
+# Set up a callback to receive notifications
+def handle_notification(data):
+    print(f"Notification received: {data}")
+    
+# This will automatically set up the notification listener and subscribe to default events
+emotiva.set_callback(handle_notification)
+
+# Any additional subscriptions will only subscribe to truly new events
+emotiva.subscribe_to_notifications(["zone2_power", "zone2_volume"])
+```
+
+### Resource Management
+The library implements robust resource management for notifications:
+
+- Socket bindings are properly handled to prevent conflicts
+- Notification listeners use efficient asynchronous I/O
+- Cleanup operations include timeouts to prevent hanging
+- Multiple cleanup mechanisms ensure proper socket closure
+
+```python
+# Proper resource cleanup
+try:
+    # Use the emotiva instance
+    await emotiva.subscribe_to_notifications(["power", "volume"])
+    await emotiva.set_power_on()
+    
+    # Other operations...
+    
+finally:
+    # Clean shutdown with timeout protection
+    await emotiva.close()
+```
+
+### Available Notification Properties
 
 The library supports subscribing to notifications from the device and receiving updates when properties change. Here are some key notification properties you can subscribe to:
 

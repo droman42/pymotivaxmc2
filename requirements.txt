@@ -1,10 +1,12 @@
 # Core dependencies
 typing-extensions>=3.7.4
 setuptools>=65.5.1
+# Python 3.7+ includes asyncio as part of the standard library
 
 # Development dependencies
 pytest>=6.0
 pytest-cov>=2.0
+pytest-asyncio>=0.17.0  # For testing async functions
 black>=21.0
 mypy>=0.9
 flake8>=3.9 

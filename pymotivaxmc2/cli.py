@@ -7,6 +7,7 @@ This module provides a command-line interface for controlling Emotiva devices.
 import argparse
 import logging
 import sys
+import asyncio
 from typing import Optional, Dict, Any
 
 from . import Emotiva, EmotivaConfig
@@ -125,8 +126,8 @@ def handle_notification(data: Dict[str, Any]) -> None:
     """Handle device notifications."""
     print(f"Notification: {data}")
 
-def main() -> int:
-    """Main entry point for the CLI."""
+async def async_main() -> int:
+    """Async main entry point for the CLI."""
     args = parse_args()
     setup_logging(args.verbose)
     
@@ -138,13 +139,13 @@ def main() -> int:
         emotiva.set_callback(handle_notification)
         
         if args.command == "discover":
-            discovery_result = emotiva.discover()
+            discovery_result = await emotiva.discover()
             if discovery_result.get("status") == "success":
                 print(f"Device discovered successfully:")
                 print(f"  IP: {discovery_result.get('ip')}")
                 print(f"  Port: {discovery_result.get('port')}")
-                if "device_info" in discovery_result:
-                    print(f"  Device info: {discovery_result.get('device_info')}")
+                print(f"  Model: {discovery_result.get('model')}")
+                print(f"  Protocol: {discovery_result.get('protocol')}")
                 return 0
             else:
                 print(f"Discovery failed: {discovery_result.get('message')}")
@@ -152,70 +153,114 @@ def main() -> int:
             
         elif args.command == "power":
             # Ensure device is discovered first
-            discovery_result = emotiva.discover()
+            discovery_result = await emotiva.discover()
             if discovery_result.get("status") != "success":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
-            response = emotiva.send_command("power", {"value": args.state})
+            response = await emotiva.send_command("power", {"value": args.state})
             print(f"Power command response: {response}")
             
         elif args.command == "volume":
             # Ensure device is discovered first
-            discovery_result = emotiva.discover()
+            discovery_result = await emotiva.discover()
             if discovery_result.get("status") != "success":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
-            response = emotiva.send_command("volume", {"value": args.level})
+            response = await emotiva.send_command("volume", {"value": args.level})
             print(f"Volume command response: {response}")
             
         elif args.command == "mode":
             # Ensure device is discovered first
-            discovery_result = emotiva.discover()
+            discovery_result = await emotiva.discover()
             if discovery_result.get("status") != "success":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
-            response = emotiva.set_mode(args.mode)
+            response = await emotiva.set_mode(args.mode)
             print(f"Mode command response: {response}")
             
         elif args.command == "input":
             # Ensure device is discovered first
-            discovery_result = emotiva.discover()
+            discovery_result = await emotiva.discover()
             if discovery_result.get("status") != "success":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
-            response = emotiva.set_input(args.source)
+            response = await emotiva.set_input(args.source)
             print(f"Input command response: {response}")
             
         elif args.command == "source":
             # Ensure device is discovered first
-            discovery_result = emotiva.discover()
+            discovery_result = await emotiva.discover()
             if discovery_result.get("status") != "success":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
-            response = emotiva.set_source(args.source)
+            response = await emotiva.set_source(args.source)
             print(f"Source command response: {response}")
             
-        elif args.command.startswith("mode_"):
-            mode = args.command[5:]  # Remove "mode_" prefix
+        elif args.command and args.command.startswith("mode_"):
+            # Handle mode preset commands
+            mode = args.command[5:]  # Strip "mode_" prefix
+            
             # Ensure device is discovered first
-            discovery_result = emotiva.discover()
+            discovery_result = await emotiva.discover()
             if discovery_result.get("status") != "success":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
-            response = emotiva.set_mode(mode)
+            # Use the appropriate mode method
+            if mode == "stereo":
+                response = await emotiva.set_stereo_mode()
+            elif mode == "direct":
+                response = await emotiva.set_direct_mode()
+            elif mode == "dolby":
+                response = await emotiva.set_dolby_mode()
+            elif mode == "dts":
+                response = await emotiva.set_dts_mode()
+            elif mode == "movie":
+                response = await emotiva.set_movie_mode()
+            elif mode == "music":
+                response = await emotiva.set_music_mode()
+            elif mode == "all_stereo":
+                response = await emotiva.set_all_stereo_mode()
+            elif mode == "auto":
+                response = await emotiva.set_auto_mode()
+            elif mode == "reference_stereo":
+                response = await emotiva.set_reference_stereo_mode()
+            elif mode == "surround_mode":
+                response = await emotiva.set_surround_mode()
+            else:
+                print(f"Unknown mode: {mode}")
+                return 1
+                
             print(f"Mode command response: {response}")
             
+        else:
+            print("No command specified. Use --help for usage information.")
+            return 1
+            
+        # Allow time for any final notifications
+        await asyncio.sleep(0.5)
+        
+        # Cleanup resources
+        await emotiva.close()
+        
         return 0
         
-    except Exception as e:
+    except Error as e:
         print(f"Error: {e}")
         return 1
+    except Exception as e:
+        _LOGGER.exception("Unexpected error")
+        print(f"Unexpected error: {e}")
+        return 1
+
+def main() -> int:
+    """Main entry point for the CLI."""
+    return asyncio.run(async_main())
 
 if __name__ == "__main__":
     sys.exit(main()) 

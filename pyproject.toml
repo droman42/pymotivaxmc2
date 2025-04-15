@@ -13,20 +13,18 @@ authors = [
     {name = "Dmitri Romanovskij", email = "dmitri.romanovski@gmail.com"}
 ]
 dependencies = [
-    "aiohttp>=3.8.0",
-    "websockets>=10.0",
-    "aiofiles>=0.8.0",
-    "typing_extensions>=4.0.0",
+    "typing-extensions>=3.7.4",
+    "setuptools>=65.5.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    pytest>=6.0,
-    pytest-cov>=2.0,
-    pytest-asyncio>=0.17.0,
-    black>=21.0
-    mypy>=0.9
-    flake8>=3.9
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+    "pytest-asyncio>=0.17.0",
+    "black>=21.0",
+    "mypy>=0.9",
+    "flake8>=3.9"
 ]
 
 [tool.setuptools]

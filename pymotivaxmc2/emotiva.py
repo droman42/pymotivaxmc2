@@ -53,6 +53,9 @@ class Emotiva:
         _sequence_number (int): Current sequence number for notifications
         _notifier (AsyncEmotivaNotifier): Handles notification reception
         _subscribed_events (Set[str]): Set of events already subscribed to
+        _input_button_names (Dict[str, str]): Dictionary to store input button names
+        _custom_name_to_source (Dict[str, str]): Dictionary to store custom name to source mapping
+        _source_to_input_button (Dict[str, str]): Dictionary to store source to input button mapping
     """
     
     def __init__(self, config: EmotivaConfig) -> None:
@@ -83,6 +86,23 @@ class Emotiva:
         
         # Track which notification types we've subscribed to
         self._subscribed_events = set()
+        
+        # Store input name mappings
+        # Maps input numbers to their custom names (e.g., {"input_1": "Mickey Mouse"})
+        self._input_button_names = {}
+        # Maps custom names to source identifiers (e.g., {"Mickey Mouse": "hdmi1"})
+        self._custom_name_to_source = {}
+        # Maps source identifiers to input button numbers (e.g., {"hdmi1": "input_1"})
+        self._source_to_input_button = {
+            "hdmi1": "input_1",
+            "hdmi2": "input_2",
+            "hdmi3": "input_3",
+            "hdmi4": "input_4",
+            "hdmi5": "input_5",
+            "hdmi6": "input_6",
+            "hdmi7": "input_7",
+            "hdmi8": "input_8",
+        }
         
         _LOGGER.debug("Initialized with ip: %s, timeout: %d", self._ip, self._timeout)
 
@@ -252,8 +272,11 @@ class Emotiva:
                 # Subscribe to default notification types from config
                 if hasattr(self._config, 'default_subscriptions') and self._config.default_subscriptions:
                     await self.subscribe_to_notifications(self._config.default_subscriptions)
+                
+                # Discover input button custom names
+                await self._discover_input_button_names()
             except Exception as e:
-                _LOGGER.warning("Error setting up default notifications: %s", e)
+                _LOGGER.warning("Error setting up default notifications or discovering input names: %s", e)
         
         # Return the discovery result
         return discovery_result
@@ -366,6 +389,25 @@ class Emotiva:
                             self._last_keepalive = time.time()
                             self._missed_keepalives = 0
                         changed[prop_name] = el.attrib
+                        
+                        # Store custom input button names
+                        if prop_name.startswith('input_') and prop_name[6:].isdigit():
+                            custom_name = el.get('value')
+                            visible = el.get('visible', 'true').lower() == 'true'
+                            
+                            # Only process visible inputs with non-empty custom names
+                            if visible and custom_name:
+                                # Store the mapping from input button to custom name
+                                self._input_button_names[prop_name] = custom_name
+                                
+                                # Create reverse mapping from custom name to source ID
+                                # Find the corresponding source ID for this input button
+                                for source_id, input_button in self._source_to_input_button.items():
+                                    if input_button == prop_name:
+                                        self._custom_name_to_source[custom_name] = source_id
+                                        _LOGGER.debug("Mapped custom name '%s' to source ID '%s'", 
+                                                     custom_name, source_id)
+                                        break
                     else:
                         _LOGGER.warning("Received property %s not in NOTIFY_EVENTS", prop_name)
                 elif el.tag in NOTIFY_EVENTS:
@@ -912,10 +954,11 @@ class Emotiva:
 
     async def switch_to_hdmi(self, hdmi_number: int) -> Dict[str, Any]:
         """
-        Switch to a specific HDMI source using unified command and notification handling.
+        Switch to a specific HDMI source using the direct hdmiX command.
         
-        This method tries multiple approaches to set both video and audio inputs 
-        to the specified HDMI input, coordinating command sending and notification receiving.
+        This method uses the direct hdmiX command which respects the user's configured
+        audio/video routing settings in the device, without forcing both video and audio
+        to use the HDMI source if the user has configured them differently.
         
         Args:
             hdmi_number (int): The HDMI input number (1-8)
@@ -940,42 +983,34 @@ class Emotiva:
         input_id = f"hdmi{hdmi_number}"
         input_name = INPUT_SOURCES.get(input_id, f"HDMI {hdmi_number}")
         
-        _LOGGER.debug("Attempting to switch to HDMI %d using unified approach", hdmi_number)
+        _LOGGER.debug("Switching to HDMI %d using direct command to respect user configurations", hdmi_number)
         
-        # Subscribe to all relevant notifications
+        # Subscribe to relevant notifications to track the result
         await self.subscribe_to_notifications(["audio_input", "video_input", "input"])
         
-        # Method 1: Try direct hdmiX command with notification handling
-        _LOGGER.debug("Trying direct hdmi%d command with notification handling", hdmi_number)
-        
-        primary_result = await self.manage_device(f"hdmi{hdmi_number}", {"value": "0"})
-        
-        # Check if successful via notifications - give a short delay for notifications to arrive
-        await asyncio.sleep(1)
-        
-        # If primary method wasn't successful (determined by checking callback data), try method 2
-        # Try method 2: separate video_input and audio_input commands
-        _LOGGER.debug("Trying separate video_input and audio_input commands with notification handling")
-        video_result = await self.manage_device("video_input", {"value": f"hdmi{hdmi_number}"})
-        audio_result = await self.manage_device("audio_input", {"value": f"hdmi{hdmi_number}"})
+        # Use direct hdmiX command which preserves the user's configured input routing
+        result = await self.manage_device(f"hdmi{hdmi_number}", {"value": "0"})
         
         return {
             "status": "complete",
-            "message": f"Attempted to switch to {input_name} using unified approach",
-            "primary_result": primary_result,
-            "video_result": video_result,
-            "audio_result": audio_result
+            "message": f"Switched to {input_name} using direct command (preserves user audio/video routing)",
+            "result": result
         }
 
     async def switch_to_source(self, source_command: str) -> Dict[str, Any]:
         """
-        Switch to a specific source using unified command and notification handling.
+        Switch to a specific source using the direct source command.
         
-        This method attempts to set the source using various methods, with proper
-        coordination between command sending and notification handling.
+        This method uses the direct source command which respects the user's configured
+        audio/video routing settings in the device, without forcing specific input routing
+        that might override user settings.
+        
+        You can use either:
+        - Standard source identifier (e.g., 'hdmi1')
+        - Custom name assigned in your device (e.g., 'Mickey Mouse')
         
         Args:
-            source_command (str): Source identifier (e.g., hdmi1, analog1, etc.)
+            source_command (str): Source identifier or custom name
             
         Returns:
             Dict[str, Any]: Command response with result status
@@ -989,8 +1024,15 @@ class Emotiva:
             if discovery_result.get("status") != "success":
                 return {"status": "error", "message": "Device discovery failed"}
         
-        # Try to map the source to a known format
-        source_id = source_command.strip().lower()
+        # Try to map the input name to a source identifier first
+        source_id = self._custom_name_to_source.get(source_command)
+        
+        # If not found as custom name, use as is (assuming it's already a source ID)
+        if source_id is None:
+            source_id = source_command.strip().lower()
+            _LOGGER.debug("Using provided source ID: %s", source_id)
+        else:
+            _LOGGER.debug("Mapped custom name '%s' to source ID '%s'", source_command, source_id)
         
         # If it's an HDMI source with a number, use the specialized method
         if source_id.startswith('hdmi') and len(source_id) > 4:
@@ -1002,27 +1044,25 @@ class Emotiva:
                 # Not a valid HDMI number, continue with generic approach
                 _LOGGER.debug("Not a valid HDMI number format: %s", source_id)
                 
-        # Get the source name for logging
-        source_name = INPUT_SOURCES.get(source_id, source_id.upper())
-        _LOGGER.debug("Attempting to set source to %s using unified approach", source_name)
+        # Get the source name for logging - try custom name first, fall back to standard name
+        source_name = source_command
+        for input_button, custom_name in self._input_button_names.items():
+            if custom_name == source_command:
+                source_name = custom_name
+                break
         
-        # Subscribe to notifications
+        _LOGGER.debug("Setting source to '%s' using direct source command", source_name)
+        
+        # Subscribe to notifications to track changes
         await self.subscribe_to_notifications(["input", "video_input", "audio_input"])
         
-        # Use manage_device to try source command with notification handling
-        primary_result = await self.manage_device("source", {"value": source_id})
-        
-        # Check if successful via notifications - give a short delay for notifications to arrive
-        await asyncio.sleep(1)
-        
-        # If needed, try alternative input command
-        input_result = await self.manage_device("input", {"source": source_id})
+        # Use the source command with proper value parameter
+        result = await self.manage_device("source", {"value": source_id})
         
         return {
             "status": "complete",
-            "message": f"Attempted to switch to {source_name} using unified approach",
-            "primary_result": primary_result,
-            "input_result": input_result
+            "message": f"Switched to '{source_name}' using direct command (preserves user audio/video routing)",
+            "result": result
         }
 
     async def close(self) -> None:
@@ -1282,3 +1322,63 @@ class Emotiva:
         else:
             # Just request power update without notification handling
             return await self.update_properties(["power"])
+
+    async def _discover_input_button_names(self) -> None:
+        """
+        Discover custom names assigned to input buttons on the device.
+        
+        This method subscribes to input_1 through input_8 notifications to retrieve
+        the custom names that users have configured on their device.
+        These names can be completely arbitrary (e.g., "Mickey Mouse" for HDMI 1).
+        """
+        try:
+            # Clear existing mappings
+            self._input_button_names.clear()
+            self._custom_name_to_source.clear()
+            
+            # Subscribe to input name notifications
+            input_button_props = [f"input_{i}" for i in range(1, 9)]
+            
+            # Make sure we're subscribed to these properties
+            await self.subscribe_to_notifications(input_button_props)
+            
+            # Request updates for these properties
+            await self.update_properties(input_button_props)
+            
+            # Give a short time for notifications to arrive
+            await asyncio.sleep(1)
+            
+            _LOGGER.debug("Input button names discovered: %s", self._input_button_names)
+        except Exception as e:
+            _LOGGER.warning("Error discovering input button names: %s", e)
+
+    def find_source_by_custom_name(self, custom_name: str) -> Optional[str]:
+        """
+        Find source identifier by custom name.
+        
+        This method looks up the source identifier (e.g., 'hdmi1') corresponding to
+        a custom name (e.g., 'Mickey Mouse') configured on the device.
+        
+        Args:
+            custom_name: Custom name assigned to an input button
+            
+        Returns:
+            Source identifier if found, None otherwise
+        """
+        if not self._custom_name_to_source:
+            _LOGGER.warning("No custom input names discovered yet. Run discover() first")
+            return None
+            
+        return self._custom_name_to_source.get(custom_name)
+    
+    def get_input_button_names(self) -> Dict[str, str]:
+        """
+        Get all input button custom names.
+        
+        Returns a dictionary mapping input button identifiers (e.g., 'input_1')
+        to their custom names (e.g., 'Mickey Mouse').
+        
+        Returns:
+            Dict mapping input button identifiers to custom names
+        """
+        return dict(self._input_button_names)

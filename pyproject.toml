@@ -8,7 +8,7 @@ version = "0.3.0"
 description = "A Python library for controlling eMotiva A/V processors"
 readme = "README.md"
 requires-python = ">=3.7"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Dmitri Romanovskij", email = "dmitri.romanovski@gmail.com"}
 ]
@@ -27,11 +27,14 @@ dev = [
     "flake8>=3.9"
 ]
 
-[tool.setuptools]
-package-dir = { "" = "pymotivaxmc2" }
+[project.scripts]
+emotiva-cli = "pymotivaxmc2.cli:main"
 
-[tool.setuptools.packages.find]
-where = ["pymotivaxmc2"]
+[tool.setuptools]
+packages = ["pymotivaxmc2"]
+
+[project.urls]
+Repository = "https://github.com/droman42/pymotivaxmc2"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -4,7 +4,7 @@ from .types import EmotivaConfig
 from .constants import INPUT_SOURCES, MODE_PRESETS
 from .notifier import AsyncEmotivaNotifier
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     'Emotiva',

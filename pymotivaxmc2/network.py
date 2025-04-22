@@ -8,7 +8,7 @@ Emotiva devices, including socket management and message handling.
 import socket
 import asyncio
 import logging
-from typing import Optional, Dict, Callable, Set
+from typing import Optional, Dict, Callable, Set, Tuple, Any
 from .types import DeviceCallback
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,12 +24,12 @@ class AsyncSocketManager:
     def __init__(self) -> None:
         """Initialize the socket manager."""
         self._transports: Dict[int, asyncio.DatagramTransport] = {}
-        self._protocols: Dict[int, asyncio.DatagramProtocol] = {}
+        self._protocols: Dict[int, Any] = {}
         self._devices: Dict[str, DeviceCallback] = {}
         self._running_tasks: Set[asyncio.Task] = set()
         self._lock = asyncio.Lock()
         
-    async def create_socket(self, port: int, callback: Callable[[bytes, tuple], None]) -> None:
+    async def create_socket(self, port: int, callback: Callable[[bytes, Tuple[str, int]], None]) -> None:
         """
         Create and configure a new UDP socket using asyncio.
         
@@ -43,13 +43,13 @@ class AsyncSocketManager:
         _LOGGER.debug("Creating UDP socket for port %d", port)
         
         class UDPProtocol(asyncio.DatagramProtocol):
-            def __init__(self, callback_func):
+            def __init__(self, callback_func: Callable[[bytes, Tuple[str, int]], None]) -> None:
                 self.callback = callback_func
                 
-            def datagram_received(self, data, addr):
+            def datagram_received(self, data: bytes, addr: Tuple[str, int]) -> None:
                 self.callback(data, addr)
                 
-            def connection_lost(self, exc):
+            def connection_lost(self, exc: Optional[Exception]) -> None:
                 _LOGGER.debug("Socket connection lost: %s", exc)
         
         loop = asyncio.get_running_loop()
@@ -108,7 +108,7 @@ class AsyncSocketManager:
                         transport.close()
                     _LOGGER.debug("Closed socket for port %d", port)
 
-    def _handle_data(self, data: bytes, addr: tuple) -> None:
+    def _handle_data(self, data: bytes, addr: Tuple[str, int]) -> None:
         """
         Handle incoming data from a socket.
         

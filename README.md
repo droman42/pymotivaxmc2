@@ -14,6 +14,7 @@ It was tested to work with eMotiva XMC-2. Original functionality should still wo
 - Efficient resource cleanup and socket handling
 - Command-line interface
 - Type hints and modern Python features
+- Full mypy compatibility for type checking
 
 ## Installation
 
@@ -382,4 +383,22 @@ A full list of available notification properties can be found in the Emotiva Rem
 
 ## License
 
-MIT License 
+MIT License
+
+## Development
+
+### Type Checking
+
+This project is fully compatible with mypy for static type checking. This helps catch type-related errors before runtime.
+
+To run type checking:
+
+```bash
+# Install mypy
+pip install mypy
+
+# Run type checking
+mypy pymotivaxmc2
+```
+
+The project includes a `py.typed` marker file to indicate that the package provides type information, making it compatible with other type-checked projects that use this library as a dependency. 

@@ -1,81 +1,85 @@
 """
-Utility functions for the eMotiva integration.
+Utility functions for working with Emotiva device communication.
 
-This module provides utility functions for handling network communication,
-data formatting, and response parsing for Emotiva devices.
+This module contains utility functions for formatting requests,
+parsing responses, and general XML handling for Emotiva A/V devices.
 """
 
 import logging
-from typing import Dict, Any, List, Tuple, Optional
 import xml.etree.ElementTree as ET
-from .constants import NOTIFY_EVENTS
+from typing import Dict, Any, Optional, List, Union, cast
 
 _LOGGER = logging.getLogger(__name__)
 
 def format_request(command: str, params: Optional[Dict[str, Any]] = None) -> bytes:
     """
-    Format a request for the Emotiva device.
+    Format a command request as XML.
     
     Args:
-        command: The command to send
-        params: Optional parameters for the command
-        
+        command (str): Command name
+        params (dict, optional): Command parameters
+    
     Returns:
-        Formatted request as bytes
+        bytes: Formatted XML request
     """
-    # Special case for emotivaPing which is sent without wrapper
+    # Create the root element based on the command type
     if command == 'emotivaPing':
-        root = ET.Element(command)
-        # Add any parameters to the command element
-        if params:
+        root = ET.Element('emotivaPing')
+    elif command == 'emotivaAck':
+        root = ET.Element('emotivaAck')
+    elif command == 'emotivaNotify':
+        root = ET.Element('emotivaNotify')
+    elif command == 'emotivaMenuNotify':
+        root = ET.Element('emotivaMenuNotify')
+    elif command == 'emotivaBarNotify':
+        root = ET.Element('emotivaBarNotify')
+    elif command == 'emotivaSubscribe':
+        root = ET.Element('emotivaSubscribe')
+    elif command == 'emotivaTransponder':
+        root = ET.Element('emotivaTransponder')
+    else:
+        # For regular commands, use the emotivaSend root
+        root = ET.Element('emotivaSend')
+        
+    # If parameters are provided, add them to the request
+    if params:
+        # For the ping request, parameters are direct attributes of the root
+        if command == 'emotivaPing':
             for key, value in params.items():
                 root.set(key, str(value))
-    
-    # Special case for subscription command
-    elif command == 'emotivaSubscription':
-        root = ET.Element(command)
-        # Add subscription elements
-        if params:
-            for event_type, event_params in params.items():
-                event_elem = ET.SubElement(root, event_type)
-                if event_params:
-                    for key, value in event_params.items():
-                        event_elem.set(key, str(value))
-    
-    # Regular control commands
-    elif command == 'emotivaControl':
-        # For control wrapper, just create it and add sub-commands
-        root = ET.Element(command)
-        
-        # Add command parameters as child elements
-        if params:
-            for cmd_name, cmd_params in params.items():
-                cmd_elem = ET.SubElement(root, cmd_name)
-                if isinstance(cmd_params, dict):
-                    for key, value in cmd_params.items():
-                        if isinstance(value, dict):
-                            # Handle nested parameters
-                            sub_elem = ET.SubElement(cmd_elem, key)
-                            for sub_key, sub_value in value.items():
-                                sub_elem.set(sub_key, str(sub_value))
-                        else:
-                            # Simple parameters as attributes
-                            cmd_elem.set(key, str(value))
-    
-    # Simple commands - for legacy or direct commands
-    else:
-        # For other commands, wrap them in request
-        root = ET.Element('Request')
-        cmd_element = ET.SubElement(root, command)
-        
-        # Add any parameters to the command element
-        if params:
+        elif command == 'emotivaSubscribe':
+            # For subscription requests, handle the events list
+            if 'events' in params and isinstance(params['events'], list):
+                events = params['events']
+                for event in events:
+                    event_element = ET.SubElement(root, 'event')
+                    event_element.set('type', event)
+            
+            # Add other subscription parameters as attributes
+            for key, value in params.items():
+                if key != 'events':
+                    root.set(key, str(value))
+        else:
+            # For regular commands, create a command element
+            cmd_element = ET.SubElement(root, command)
+            
+            # Process parameters for the command
             for key, value in params.items():
                 if isinstance(value, dict):
-                    # Handle nested parameters by creating child elements
+                    # Nested parameters as sub-elements
                     param_element = ET.SubElement(cmd_element, key)
                     for sub_key, sub_value in value.items():
                         param_element.set(sub_key, str(sub_value))
+                elif isinstance(value, list):
+                    # List parameters as multiple sub-elements
+                    for item in value:
+                        if isinstance(item, dict):
+                            list_element = ET.SubElement(cmd_element, key)
+                            for item_key, item_value in item.items():
+                                list_element.set(item_key, str(item_value))
+                        else:
+                            list_element = ET.SubElement(cmd_element, key)
+                            list_element.text = str(item)
                 else:
                     # Simple parameters as attributes
                     cmd_element.set(key, str(value))
@@ -87,7 +91,7 @@ def format_request(command: str, params: Optional[Dict[str, Any]] = None) -> byt
     xml_string = xml_string.replace(b' />', b'/>')
     
     _LOGGER.debug("Formatted request: %s", xml_string.decode('utf-8'))
-    return xml_string
+    return cast(bytes, xml_string)
 
 def parse_response(data: bytes) -> Optional[ET.Element]:
     """

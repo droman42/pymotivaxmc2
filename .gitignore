@@ -31,3 +31,5 @@ lib64
 test_command.py
 test_udp.py
 async.md
+pyrightconfig.json
+.lock

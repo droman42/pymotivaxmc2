@@ -9,7 +9,7 @@ import socket
 import time
 import logging
 import asyncio
-from typing import Optional, Dict, Any, Callable, List, Tuple, Set
+from typing import Optional, Dict, Any, Callable, List, Tuple, Set, Union, cast
 from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
 
@@ -68,8 +68,8 @@ class Emotiva:
         self._ip = config.ip
         self._config = config
         self._timeout = config.timeout
-        self._transponder_port = None
-        self._callback = None
+        self._transponder_port: Optional[int] = None
+        self._callback: Optional[Callable[[Dict[str, Any]], None]] = None
         self._discovery_complete = False
         
         # Create the asyncio notifier for handling notifications
@@ -85,13 +85,13 @@ class Emotiva:
         self._lock = asyncio.Lock()
         
         # Track which notification types we've subscribed to
-        self._subscribed_events = set()
+        self._subscribed_events: Set[str] = set()
         
         # Store input name mappings
         # Maps input numbers to their custom names (e.g., {"input_1": "Mickey Mouse"})
-        self._input_button_names = {}
+        self._input_button_names: Dict[str, str] = {}
         # Maps custom names to source identifiers (e.g., {"Mickey Mouse": "hdmi1"})
-        self._custom_name_to_source = {}
+        self._custom_name_to_source: Dict[str, str] = {}
         # Maps source identifiers to input button numbers (e.g., {"hdmi1": "input_1"})
         self._source_to_input_button = {
             "hdmi1": "input_1",
@@ -117,8 +117,8 @@ class Emotiva:
             Dictionary with discovery results.
         """
         # Set a specified timeout for discovery
-        self._timeout = timeout
-        discovery_result = {"status": "error", "message": "Discovery failed for unknown reason"}
+        self._timeout = int(timeout)
+        discovery_result: Dict[str, Any] = {"status": "error", "message": "Discovery failed for unknown reason"}
         
         _LOGGER.debug("Starting discovery for %s", self._ip)
         
@@ -163,7 +163,7 @@ class Emotiva:
             loop = asyncio.get_running_loop()
             response_future = loop.create_future()
             
-            def socket_callback():
+            def socket_callback() -> None:
                 try:
                     data, addr = response_sock.recvfrom(4096)
                     if not response_future.done():
@@ -282,24 +282,26 @@ class Emotiva:
         return discovery_result
 
     async def _check_keepalive(self) -> None:
-        """Check if we've missed too many keepalives."""
-        current_time = time.time()
-        # Convert interval from ms to seconds
-        interval_seconds = self._config.keepalive_interval / 1000.0
+        """
+        Check if keepalives are being received correctly.
         
-        # Check if we've exceeded the max missed keepalives
-        if current_time - self._last_keepalive > interval_seconds * self._config.max_missed_keepalives:
-            _LOGGER.warning("Missed %d keepalives, device may be offline", self._config.max_missed_keepalives)
+        Raises:
+            DeviceOfflineError: If device appears to be offline.
+        """
+        current_time = time.time()
+        keepalive_interval_seconds = self._config.keepalive_interval / 1000.0
+        
+        if current_time - self._last_keepalive > keepalive_interval_seconds:
             self._missed_keepalives += 1
             
-            # Reset last keepalive to prevent repeated warnings
-            self._last_keepalive = current_time
-            
-            # Try to rediscover the device
-            try:
-                await self.discover()
-            except Exception as e:
-                _LOGGER.error("Failed to rediscover device: %s", e)
+            if self._missed_keepalives > self._config.max_missed_keepalives:
+                _LOGGER.warning(
+                    "Device appears to be offline after %d missed keepalives",
+                    self._missed_keepalives
+                )
+                raise DeviceOfflineError("Device appears to be offline")
+        else:
+            self._missed_keepalives = 0
 
     def set_callback(self, callback: Optional[Callable[[Dict[str, Any]], None]]) -> None:
         """
@@ -512,34 +514,16 @@ class Emotiva:
 
     def _format_command_request(self, cmd: str, params: Optional[Dict[str, Any]] = None) -> bytes:
         """
-        Format a command request as XML.
+        Format a command request.
         
         Args:
             cmd: Command name
             params: Command parameters
             
         Returns:
-            Formatted request as bytes
+            Formatted request data
         """
-        # Format the command request by directly creating XML
-        # according to the specification format
-        root = ET.Element("emotivaControl")
-        
-        # Create the command element with attributes
-        cmd_element = ET.SubElement(root, cmd)
-        
-        # Add parameters as attributes
-        if params:
-            for key, value in params.items():
-                cmd_element.set(key, str(value))
-                
-        # Ensure "value" attribute is present
-        if params and "value" not in params:
-            cmd_element.set("value", "0")
-        
-        # Convert to XML string
-        xml_declaration = '<?xml version="1.0" encoding="utf-8"?>\n'
-        return xml_declaration.encode('utf-8') + ET.tostring(root, encoding='utf-8')
+        return format_request(cmd, params)
     
     def _parse_command_response(self, data: bytes, cmd: str) -> Dict[str, Any]:
         """
@@ -1108,15 +1092,14 @@ class Emotiva:
         except Exception as e:
             _LOGGER.debug("Error during cleanup: %s", e)
             
-    def __del__(self):
-        """Clean up resources when the object is destroyed."""
-        try:
-            # Use asyncio.run to call the async close method, but only in non-async contexts
-            # This is not ideal, but provides some cleanup in synchronous contexts
-            if not asyncio.get_event_loop().is_running():
-                asyncio.run(self.close())
-        except Exception as e:
-            _LOGGER.debug("Error during cleanup: %s", e)
+    def __del__(self) -> None:
+        """Ensure resources are cleaned up when the object is deleted."""
+        if hasattr(self, '_notifier'):
+            # Create a new event loop if necessary
+            try:
+                asyncio.run(self._notifier.cleanup())
+            except Exception:
+                pass  # Ignore errors during cleanup in __del__
 
     async def update_properties(self, properties: List[str]) -> Dict[str, Any]:
         """
@@ -1224,7 +1207,7 @@ class Emotiva:
         
         # Create a task for handling notifications (using a dummy function)
         # This ensures the notification listener keeps running while we wait for the command response
-        async def dummy_wait():
+        async def dummy_wait() -> Dict[str, str]:
             # Wait for a short time to ensure notifications have a chance to be processed
             await asyncio.sleep(0.5)
             return {"status": "notification_listener_running"}

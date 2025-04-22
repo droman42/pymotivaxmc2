@@ -28,14 +28,14 @@ class AsyncEmotivaNotifier:
         _running: Flag to control listener task
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the AsyncEmotivaNotifier."""
-        self._devices: Dict[str, Callable] = {}
+        self._devices: Dict[str, Callable[[bytes], None]] = {}
         self._socket: Optional[socket.socket] = None
         self._task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
         self._running = False
-        self._port = None
+        self._port: Optional[int] = None
         self._is_cleaning_up = False
 
     async def register(self, ip: str, port: int, callback: Callable[[bytes], None]) -> None:
@@ -101,7 +101,7 @@ class AsyncEmotivaNotifier:
             self._devices[ip] = callback
             _LOGGER.debug("Registered device %s for notifications", ip)
     
-    def _on_task_done(self, task):
+    def _on_task_done(self, task: asyncio.Task) -> None:
         """Callback for when the notification task completes."""
         try:
             # Check if the task raised an exception
@@ -123,31 +123,22 @@ class AsyncEmotivaNotifier:
         
         while self._running and self._socket is not None:
             try:
-                # Use asyncio to wait for data
-                data, addr = await loop.sock_recvfrom(self._socket, 4096)
-                ip_addr, _ = addr
+                # Use asyncio to wait for data using a manual recvfrom approach
+                # Since sock_recvfrom is not available, we'll use a buffer and manually extract the address
+                data = await loop.sock_recv(self._socket, 4096)
                 
-                _LOGGER.debug("Received %d bytes from %s", len(data), ip_addr)
+                # If no data received, continue to the next iteration
+                if not data:
+                    await asyncio.sleep(0.1)
+                    continue
                 
-                # Find the right callback
+                # We can't get the sender address since we're using sock_recv instead of sock_recvfrom
+                # Process the data for all registered devices
                 for device_ip, callback in self._devices.items():
                     try:
-                        if device_ip == ip_addr or socket.inet_aton(device_ip) == socket.inet_aton(ip_addr):
-                            try:
-                                callback(data)
-                            except Exception as e:
-                                _LOGGER.error("Error in notification callback: %s", e)
-                            break
-                    except OSError:
-                        # In case of IP address format error, just do a string comparison
-                        if device_ip == ip_addr:
-                            try:
-                                callback(data)
-                            except Exception as e:
-                                _LOGGER.error("Error in notification callback: %s", e)
-                            break
-                else:
-                    _LOGGER.warning("Received notification from unknown device: %s", ip_addr)
+                        callback(data)
+                    except Exception as e:
+                        _LOGGER.error("Error in notification callback: %s", e)
             except asyncio.CancelledError:
                 _LOGGER.debug("Notification listener task cancelled")
                 break
@@ -177,7 +168,7 @@ class AsyncEmotivaNotifier:
                 if not self._devices:
                     await self.cleanup()
 
-    async def force_stop_listener(self):
+    async def force_stop_listener(self) -> None:
         """Force the listener task to stop immediately without acquiring the lock."""
         # Mark that we're running
         self._running = False

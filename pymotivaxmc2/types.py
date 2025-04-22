@@ -10,7 +10,7 @@ import socket
 from .constants import DEFAULT_KEEPALIVE_INTERVAL, MAX_MISSED_KEEPALIVES
 
 # Type aliases for better readability
-DeviceCallback = Callable[[Dict[str, Any]], None]
+DeviceCallback = Callable[[bytes], None]
 SocketDict = Dict[int, socket.socket]
 DeviceDict = Dict[str, DeviceCallback]
 ResponseData = Dict[str, Any]

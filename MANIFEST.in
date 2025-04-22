@@ -6,6 +6,7 @@ exclude async.md
 
 # Include package data
 recursive-include pymotivaxmc2 *.py
+include pymotivaxmc2/py.typed
 
 # Exclude git files
 exclude .gitignore

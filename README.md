@@ -94,70 +94,80 @@ Troubleshooting:
 
 ### As a Library
 
+The library is fully asynchronous and uses Python's asyncio framework. Make sure to use `await` with all method calls.
+
 ```python
+import asyncio
 from pymotivaxmc2 import Emotiva, EmotivaConfig
 
-# Basic initialization and control
-# Create a configuration
-config = EmotivaConfig(ip="192.168.1.100")
+async def main():
+    # Basic initialization and control
+    # Create a configuration
+    config = EmotivaConfig(ip="192.168.1.100")
 
-# Create an instance
-emotiva = Emotiva(config)
+    # Create an instance
+    emotiva = Emotiva(config)
 
-# Discover the device
-discovery_result = emotiva.discover()
+    # Discover the device
+    discovery_result = await emotiva.discover()
 
-# Power control
-emotiva.set_power_on()    # Turn main zone on
-emotiva.set_power_off()   # Turn main zone off
-emotiva.toggle_power()    # Toggle main zone power
-emotiva.get_power()       # Get current main zone power status
+    # Power control
+    await emotiva.set_power_on()    # Turn main zone on
+    await emotiva.set_power_off()   # Turn main zone off
+    await emotiva.toggle_power()    # Toggle main zone power
+    await emotiva.get_power()       # Get current main zone power status
 
-# Source/Input Selection
-# Method 1: Using legacy methods (backward compatibility)
-emotiva.set_source('hdmi1')
-emotiva.set_input('hdmi1')
+    # Source/Input Selection
+    # Method 1: Using legacy methods (backward compatibility)
+    await emotiva.set_source('hdmi1')
+    await emotiva.set_input('hdmi1')
 
-# Method 2: Enhanced direct HDMI selection with multiple methods (recommended)
-emotiva.switch_to_hdmi(1)  # Tries multiple methods to set both video and audio to HDMI 1
+    # Method 2: Enhanced direct HDMI selection with multiple methods (recommended)
+    await emotiva.switch_to_hdmi(1)  # Tries multiple methods to set both video and audio to HDMI 1
 
-# Method 3: Using any source command from API specification section 4.1
-emotiva.switch_to_source('hdmi1')      # HDMI inputs (same as switch_to_hdmi)
-emotiva.switch_to_source('analog1')    # Analog inputs
-emotiva.switch_to_source('optical2')   # Digital inputs
-emotiva.switch_to_source('tuner')      # Tuner
-emotiva.switch_to_source('source_tuner')  # Alternative tuner command format
+    # Method 3: Using any source command from API specification section 4.1
+    await emotiva.switch_to_source('hdmi1')      # HDMI inputs (same as switch_to_hdmi)
+    await emotiva.switch_to_source('analog1')    # Analog inputs
+    await emotiva.switch_to_source('optical2')   # Digital inputs
+    await emotiva.switch_to_source('tuner')      # Tuner
+    await emotiva.switch_to_source('source_tuner')  # Alternative tuner command format
 
-# Other commands
-emotiva.set_volume(1)  # Increase volume by 1dB
+    # Other commands
+    await emotiva.set_volume(1)  # Increase volume by 1dB
 
-# Zone 2 Control
-emotiva.get_zone2_power()  # Request Zone 2 power status via notification
-emotiva.set_zone2_power_on()  # Turn on Zone 2
-emotiva.set_zone2_power_off()  # Turn off Zone 2
-emotiva.toggle_zone2_power()  # Toggle Zone 2 power
+    # Zone 2 Control
+    await emotiva.get_zone2_power()  # Request Zone 2 power status via notification
+    await emotiva.set_zone2_power_on()  # Turn on Zone 2
+    await emotiva.set_zone2_power_off()  # Turn off Zone 2
+    await emotiva.toggle_zone2_power()  # Toggle Zone 2 power
 
-# Property Subscriptions and Updates
-# Set up a callback to receive notifications
-def handle_notification(data):
-    print(f"Notification received: {data}")
+    # Property Subscriptions and Updates
+    # Set up a callback to receive notifications
+    def handle_notification(data):
+        print(f"Notification received: {data}")
+        
+    emotiva.set_callback(handle_notification)
+
+    # Subscribe to specific properties
+    await emotiva.subscribe_to_notifications([
+        "power", "zone2_power", "volume", "source"
+    ])
+
+    # Request updates for specific properties
+    await emotiva.update_properties([
+        "power", "zone2_power", "volume", "source"
+    ])
     
-emotiva.set_callback(handle_notification)
+    # Always close the connection when done
+    await emotiva.close()
 
-# Subscribe to specific properties
-emotiva.subscribe_to_notifications([
-    "power", "zone2_power", "volume", "source"
-])
-
-# Request updates for specific properties
-emotiva.update_properties([
-    "power", "zone2_power", "volume", "source"
-])
+# Run the async function
+asyncio.run(main())
 ```
 
 ### Command Line Interface
 
-The package includes a command-line interface for basic operations:
+The package includes a command-line interface for basic operations. The CLI handles the async implementation internally for you:
 
 ```bash
 # Device Discovery
@@ -228,47 +238,47 @@ class EmotivaConfig:
 
 #### Emotiva
 
-Main class for device control:
+Main class for device control. All methods are asynchronous and should be awaited:
 
 ```python
 class Emotiva:
     # Core methods
-    def discover(timeout: float = 1.0) -> Dict[str, Any]
-    def send_command(cmd: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]
+    async def discover(timeout: float = 1.0) -> Dict[str, Any]
+    async def send_command(cmd: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]
     
     # Power control
-    def set_power_on() -> Dict[str, Any]
-    def set_power_off() -> Dict[str, Any]
-    def toggle_power() -> Dict[str, Any]
-    def get_power() -> Dict[str, Any]
+    async def set_power_on() -> Dict[str, Any]
+    async def set_power_off() -> Dict[str, Any]
+    async def toggle_power() -> Dict[str, Any]
+    async def get_power() -> Dict[str, Any]
     
     # Source/Input Selection
-    def set_source(source: str) -> Dict[str, Any]  # Legacy method
-    def set_input(input_source: str) -> Dict[str, Any]  # Legacy method
+    async def set_source(source: str) -> Dict[str, Any]  # Legacy method
+    async def set_input(input_source: str) -> Dict[str, Any]  # Legacy method
     
     # Enhanced Source/Input Selection (recommended)
-    def switch_to_hdmi(hdmi_number: int) -> Dict[str, Any]  # Specifically for HDMI inputs
-    def switch_to_source(source_command: str) -> Dict[str, Any]  # For any input type
+    async def switch_to_hdmi(hdmi_number: int) -> Dict[str, Any]  # Specifically for HDMI inputs
+    async def switch_to_source(source_command: str) -> Dict[str, Any]  # For any input type
     
     # Audio Mode control
-    def set_mode(mode: str) -> Dict[str, Any]
+    async def set_mode(mode: str) -> Dict[str, Any]
     
     # Zone 2 control
-    def get_zone2_power() -> Dict[str, Any]
-    def set_zone2_power_on() -> Dict[str, Any]
-    def set_zone2_power_off() -> Dict[str, Any]
-    def toggle_zone2_power() -> Dict[str, Any]
+    async def get_zone2_power() -> Dict[str, Any]
+    async def set_zone2_power_on() -> Dict[str, Any]
+    async def set_zone2_power_off() -> Dict[str, Any]
+    async def toggle_zone2_power() -> Dict[str, Any]
     
     # Notification handling
     def set_callback(callback: Optional[Callable[[Dict[str, Any]], None]]) -> None
-    def subscribe_to_notifications(event_types: Optional[List[str]] = None) -> Dict[str, Any]
-    def update_properties(properties: List[str]) -> Dict[str, Any]
+    async def subscribe_to_notifications(event_types: Optional[List[str]] = None) -> Dict[str, Any]
+    async def update_properties(properties: List[str]) -> Dict[str, Any]
     
     # Resource management
-    def close() -> None  # Clean up resources with timeout handling
+    async def close() -> None  # Clean up resources with timeout handling
 ```
 
-This class now features optimized notification handling with automatic subscription tracking and improved resource cleanup, including timeout protection and graceful shutdown.
+This class features optimized notification handling with automatic subscription tracking and improved resource cleanup, including timeout protection and graceful shutdown.
 
 ## Input Source Selection
 
@@ -305,24 +315,32 @@ The library includes an optimized notification system that efficiently manages s
 - Subscriptions are set up automatically when a callback is registered
 
 ```python
-# Configure default subscriptions during initialization
-config = EmotivaConfig(
-    ip="192.168.1.100",
-    default_subscriptions=["power", "volume", "input", "audio_input", "video_input"]
-)
+import asyncio
 
-# Create an instance with optimized notification handling
-emotiva = Emotiva(config)
+async def main():
+    # Configure default subscriptions during initialization
+    config = EmotivaConfig(
+        ip="192.168.1.100",
+        default_subscriptions=["power", "volume", "input", "audio_input", "video_input"]
+    )
 
-# Set up a callback to receive notifications
-def handle_notification(data):
-    print(f"Notification received: {data}")
+    # Create an instance with optimized notification handling
+    emotiva = Emotiva(config)
+
+    # Set up a callback to receive notifications
+    def handle_notification(data):
+        print(f"Notification received: {data}")
+        
+    # This will automatically set up the notification listener and subscribe to default events
+    emotiva.set_callback(handle_notification)
+
+    # Any additional subscriptions will only subscribe to truly new events
+    await emotiva.subscribe_to_notifications(["zone2_power", "zone2_volume"])
     
-# This will automatically set up the notification listener and subscribe to default events
-emotiva.set_callback(handle_notification)
+    # Always close connections when done
+    await emotiva.close()
 
-# Any additional subscriptions will only subscribe to truly new events
-emotiva.subscribe_to_notifications(["zone2_power", "zone2_volume"])
+asyncio.run(main())
 ```
 
 ### Resource Management
@@ -334,17 +352,24 @@ The library implements robust resource management for notifications:
 - Multiple cleanup mechanisms ensure proper socket closure
 
 ```python
-# Proper resource cleanup
-try:
-    # Use the emotiva instance
-    await emotiva.subscribe_to_notifications(["power", "volume"])
-    await emotiva.set_power_on()
+import asyncio
+
+async def main():
+    config = EmotivaConfig(ip="192.168.1.100")
+    emotiva = Emotiva(config)
     
-    # Other operations...
-    
-finally:
-    # Clean shutdown with timeout protection
-    await emotiva.close()
+    try:
+        # Use the emotiva instance
+        await emotiva.subscribe_to_notifications(["power", "volume"])
+        await emotiva.set_power_on()
+        
+        # Other operations...
+        
+    finally:
+        # Clean shutdown with timeout protection
+        await emotiva.close()
+
+asyncio.run(main())
 ```
 
 ### Available Notification Properties

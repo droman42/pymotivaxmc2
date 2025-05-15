@@ -1,21 +1,12 @@
-from .emotiva import Emotiva
-from .exceptions import Error, InvalidTransponderResponseError, InvalidSourceError, InvalidModeError, DeviceOfflineError
-from .types import EmotivaConfig
-from .constants import INPUT_SOURCES, MODE_PRESETS
-from .notifier import AsyncEmotivaNotifier
+"""
+Python library for controlling Emotiva XMC-2 processors.
 
-__version__ = "0.3.0"
+This library allows you to discover, connect to, and control Emotiva XMC-2 processors on your network.
+"""
 
-__all__ = [
-    'Emotiva',
-    'EmotivaConfig',
-    'Error',
-    'InvalidTransponderResponseError',
-    'InvalidSourceError',
-    'InvalidModeError',
-    'DeviceOfflineError',
-    'INPUT_SOURCES',
-    'MODE_PRESETS',
-    'AsyncEmotivaNotifier',
-    '__version__'
-]
+from .emotiva_types import EmotivaConfig, EmotivaNotification
+from .controller import EmotivaController
+from .exceptions import EmotivaError
+
+__version__ = "0.5.0"
+__all__ = ["EmotivaController", "EmotivaError", "EmotivaConfig", "EmotivaNotification"]

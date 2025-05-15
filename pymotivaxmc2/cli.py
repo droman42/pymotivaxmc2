@@ -1,5 +1,5 @@
 """
-Command-line interface for the pymotiva package.
+Command-line interface for the pymotivaxmc2 package.
 
 This module provides a command-line interface for controlling Emotiva devices.
 """
@@ -10,11 +10,27 @@ import sys
 import asyncio
 from typing import Optional, Dict, Any, List
 
-from . import Emotiva, EmotivaConfig
-from .exceptions import Error, InvalidTransponderResponseError, InvalidSourceError, InvalidModeError
+from .controller import EmotivaController
+from .exceptions import EmotivaError, InvalidTransponderResponseError, InvalidSourceError, InvalidModeError
 from .constants import MODE_PRESETS, INPUT_SOURCES
+from .emotiva_types import EmotivaNotification, EmotivaConfig, EmotivaNotificationListener
 
 _LOGGER = logging.getLogger(__name__)
+
+class CLINotificationListener(EmotivaNotificationListener):
+    """CLI notification listener that prints notifications to the console."""
+    
+    def on_notification(self, notification: EmotivaNotification) -> None:
+        """Handle a notification by printing it to the console."""
+        print(f"Notification: {notification.notification_type} from {notification.device_ip}")
+        
+        # Print additional details based on notification type
+        if notification.data:
+            if isinstance(notification.data, dict) and 'properties' in notification.data:
+                for prop_name, prop_data in notification.data['properties'].items():
+                    print(f"  Property: {prop_name} = {prop_data.get('value')}")
+            else:
+                print(f"  Data: {notification.data}")
 
 def setup_logging(verbose: bool) -> None:
     """Configure logging based on verbosity level."""
@@ -99,7 +115,7 @@ def parse_args() -> argparse.Namespace:
     )
     mode_parser.add_argument(
         "mode",
-        choices=list(MODE_PRESETS.keys()),
+        choices=list(MODE_PRESETS),
         help="Mode to set"
     )
     
@@ -110,7 +126,7 @@ def parse_args() -> argparse.Namespace:
     )
     input_parser.add_argument(
         "source",
-        choices=list(INPUT_SOURCES.keys()),
+        choices=list(INPUT_SOURCES),
         help="Input source to set"
     )
     
@@ -121,7 +137,7 @@ def parse_args() -> argparse.Namespace:
     )
     source_parser.add_argument(
         "source",
-        choices=list(INPUT_SOURCES.keys()),
+        choices=list(INPUT_SOURCES),
         help="Source to set"
     )
     
@@ -144,7 +160,7 @@ def parse_args() -> argparse.Namespace:
     )
     switch_parser.add_argument(
         "source",
-        choices=list(INPUT_SOURCES.keys()),
+        choices=list(INPUT_SOURCES),
         help="Source to switch to"
     )
     
@@ -184,7 +200,7 @@ def parse_args() -> argparse.Namespace:
     )
     zone2_source_parser.add_argument(
         "source",
-        choices=[k for k in INPUT_SOURCES.keys() if k.startswith("zone2_") or not any(x.startswith("zone2_") for x in INPUT_SOURCES.keys())],
+        choices=[k for k in INPUT_SOURCES if k.startswith("zone2_") or not any(x.startswith("zone2_") for x in INPUT_SOURCES)],
         help="Source to set for Zone 2"
     )
     
@@ -192,7 +208,7 @@ def parse_args() -> argparse.Namespace:
     for mode in MODE_PRESETS:
         mode_preset_parser = subparsers.add_parser(
             f"mode_{mode}",
-            help=f"Set {MODE_PRESETS[mode]} mode"
+            help=f"Set {mode} mode"
         )
     
     # Query command for getting specific status information
@@ -239,25 +255,26 @@ def parse_args() -> argparse.Namespace:
     
     return parser.parse_args()
 
-def handle_notification(data: Dict[str, Any]) -> None:
-    """Handle device notifications."""
-    print(f"Notification: {data}")
-
 async def async_main() -> int:
     """Async main entry point for the CLI."""
     args = parse_args()
     setup_logging(args.verbose)
     
     try:
-        config = EmotivaConfig(ip=args.ip, timeout=args.timeout)
-        emotiva = Emotiva(config)
+        # Create controller with command-line parameters
+        config = EmotivaConfig(
+            ip=args.ip,
+            timeout=float(args.timeout)
+        )
+        controller = EmotivaController(config)
         
-        # Set up notification callback
-        emotiva.set_callback(handle_notification)
+        # Register notification handler
+        notification_listener = CLINotificationListener()
+        await controller.notification_registry.register_listener(notification_listener)
         
         if args.command == "discover":
-            discovery_result = await emotiva.discover()
-            if discovery_result.get("status") == "success":
+            discovery_result = await controller.discover()
+            if discovery_result.get("status") == "ok":
                 print(f"Device discovered successfully:")
                 print(f"  IP: {discovery_result.get('ip')}")
                 print(f"  Port: {discovery_result.get('port')}")
@@ -270,16 +287,16 @@ async def async_main() -> int:
                 
         elif args.command == "status":
             # Ensure device is discovered first
-            discovery_result = await emotiva.discover()
-            if discovery_result.get("status") != "success":
+            discovery_result = await controller.discover()
+            if discovery_result.get("status") != "ok":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
             # Subscribe to the properties we want to query
-            await emotiva.subscribe_to_notifications(args.properties)
+            await controller.subscribe_to_notifications(args.properties)
             
             # Request updates for those properties
-            response = await emotiva.update_properties(args.properties)
+            response = await controller.update_properties(args.properties)
             
             # Wait a moment for notifications
             await asyncio.sleep(0.5)
@@ -295,202 +312,179 @@ async def async_main() -> int:
             
         elif args.command == "power":
             # Ensure device is discovered first
-            discovery_result = await emotiva.discover()
-            if discovery_result.get("status") != "success":
+            discovery_result = await controller.discover()
+            if discovery_result.get("status") != "ok":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
             # Use the appropriate power method
             if args.state == "on":
-                response = await emotiva.set_power_on()
+                response = await controller.power_on()
                 print(f"Power on command response: {response}")
             elif args.state == "off":
-                response = await emotiva.set_power_off()
+                response = await controller.power_off()
                 print(f"Power off command response: {response}")
             elif args.state == "toggle":
-                response = await emotiva.toggle_power()
+                current_power = await controller.get_power()
+                if current_power is True:
+                    response = await controller.power_off()
+                else:
+                    response = await controller.power_on()
                 print(f"Power toggle command response: {response}")
             elif args.state == "status":
-                response = await emotiva.get_power()
-                print(f"Power status query sent: {response.get('status')}")
-                # Wait a moment for notifications
-                await asyncio.sleep(1.0)
-                # Add a more user-friendly status display
-                print("\nCurrent Power Status:")
-                print("-" * 40)
+                power_status = await controller.get_power()
+                print(f"Power status: {'ON' if power_status else 'OFF'}")
             
         elif args.command == "volume":
             # Ensure device is discovered first
-            discovery_result = await emotiva.discover()
-            if discovery_result.get("status") != "success":
+            discovery_result = await controller.discover()
+            if discovery_result.get("status") != "ok":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
-            # Check if the level is relative or absolute
-            if args.level > 0 and args.level < 100:
-                # Absolute volume level
-                response = await emotiva.send_command("set_volume", {"value": str(args.level), "ack": "yes"})
-            else:
-                # Relative volume change
-                response = await emotiva.send_command("volume", {"value": args.level, "ack": "yes"})
-                
+            # Set volume according to the requested level
+            response = await controller.set_volume(args.level)
             print(f"Volume command response: {response}")
             
         elif args.command == "mode":
             # Ensure device is discovered first
-            discovery_result = await emotiva.discover()
-            if discovery_result.get("status") != "success":
+            discovery_result = await controller.discover()
+            if discovery_result.get("status") != "ok":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
-            response = await emotiva.set_mode(args.mode)
+            response = await controller.set_mode(args.mode)
             print(f"Mode command response: {response}")
             
-        elif args.command == "input":
+        elif args.command == "input" or args.command == "source":
             # Ensure device is discovered first
-            discovery_result = await emotiva.discover()
-            if discovery_result.get("status") != "success":
+            discovery_result = await controller.discover()
+            if discovery_result.get("status") != "ok":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
-            response = await emotiva.set_input(args.source)
-            print(f"Input command response: {response}")
-            
-        elif args.command == "source":
-            # Ensure device is discovered first
-            discovery_result = await emotiva.discover()
-            if discovery_result.get("status") != "success":
-                print(f"Discovery failed: {discovery_result.get('message')}")
+            # Set source according to the requested source
+            try:
+                response = await controller.set_input(args.source)
+                print(f"Input command response: {response}")
+            except InvalidSourceError as e:
+                print(f"Error: {e}")
                 return 1
-                
-            response = await emotiva.set_source(args.source)
-            print(f"Source command response: {response}")
             
         elif args.command == "hdmi":
             # Ensure device is discovered first
-            discovery_result = await emotiva.discover()
-            if discovery_result.get("status") != "success":
+            discovery_result = await controller.discover()
+            if discovery_result.get("status") != "ok":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
-            response = await emotiva.switch_to_hdmi(args.number)
-            print(f"HDMI command response: {response}")
+            try:
+                # Format HDMI source and use set_input
+                response = await controller.set_input(f"hdmi{args.number}")
+                print(f"HDMI command response: {response}")
+            except InvalidSourceError as e:
+                print(f"Error: {e}")
+                return 1
             
         elif args.command == "switch":
             # Ensure device is discovered first
-            discovery_result = await emotiva.discover()
-            if discovery_result.get("status") != "success":
+            discovery_result = await controller.discover()
+            if discovery_result.get("status") != "ok":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
-            response = await emotiva.switch_to_source(args.source)
-            print(f"Switch command response: {response}")
+            try:
+                response = await controller.set_input(args.source)
+                print(f"Switch command response: {response}")
+            except InvalidSourceError as e:
+                print(f"Error: {e}")
+                return 1
             
         elif args.command == "zone2" and args.zone2_command:
             # Ensure device is discovered first
-            discovery_result = await emotiva.discover()
-            if discovery_result.get("status") != "success":
+            discovery_result = await controller.discover()
+            if discovery_result.get("status") != "ok":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
             if args.zone2_command == "power":
                 if args.state == "on":
-                    response = await emotiva.set_zone2_power_on()
+                    response = await controller.set_zone2_power(True)
                 elif args.state == "off":
-                    response = await emotiva.set_zone2_power_off()
+                    response = await controller.set_zone2_power(False)
                 else:  # toggle
-                    response = await emotiva.toggle_zone2_power()
+                    # Get current zone2 state
+                    zone2_state = await controller.get_zone2_state()
+                    zone2_power = zone2_state.get("data", {}).get("power") == "true"
+                    response = await controller.set_zone2_power(not zone2_power)
                 print(f"Zone 2 power command response: {response}")
                 
             elif args.zone2_command == "volume":
-                # For zone2 volume, we'll use the send_command method
-                # since there's no specific method for zone2 volume yet
+                # For zone2 volume, we'll use the set_zone2_volume method
                 if args.level >= -96 and args.level <= 11:
                     # Absolute volume
-                    response = await emotiva.send_command("zone2_set_volume", {"value": args.level, "ack": "yes"})
+                    response = await controller.set_zone2_volume(args.level)
                 else:
-                    # Relative volume change
-                    response = await emotiva.send_command("zone2_volume", {"value": args.level, "ack": "yes"})
+                    # Relative volume change not directly supported, convert to command
+                    response = await controller.send_command("control", {
+                        "command": "zone2_volume",
+                        "value": str(args.level),
+                        "ack": "true"
+                    })
                 print(f"Zone 2 volume command response: {response}")
                 
             elif args.zone2_command == "source":
-                # For zone2 source, we need to use the appropriate command
-                source_cmd = f"zone2_{args.source}" if not args.source.startswith("zone2_") else args.source
-                response = await emotiva.send_command(source_cmd, {"value": "0", "ack": "yes"})
-                print(f"Zone 2 source command response: {response}")
+                # For zone2 source, use set_zone2_input
+                try:
+                    response = await controller.set_zone2_input(args.source)
+                    print(f"Zone 2 source command response: {response}")
+                except InvalidSourceError as e:
+                    print(f"Error: {e}")
+                    return 1
             
         elif args.command and args.command.startswith("mode_"):
             # Handle mode preset commands
             mode = args.command[5:]  # Strip "mode_" prefix
             
             # Ensure device is discovered first
-            discovery_result = await emotiva.discover()
-            if discovery_result.get("status") != "success":
+            discovery_result = await controller.discover()
+            if discovery_result.get("status") != "ok":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
                 
-            # Use the appropriate mode method
-            if mode == "stereo":
-                response = await emotiva.set_stereo_mode()
-            elif mode == "direct":
-                response = await emotiva.set_direct_mode()
-            elif mode == "dolby":
-                response = await emotiva.set_dolby_mode()
-            elif mode == "dts":
-                response = await emotiva.set_dts_mode()
-            elif mode == "movie":
-                response = await emotiva.set_movie_mode()
-            elif mode == "music":
-                response = await emotiva.set_music_mode()
-            elif mode == "all_stereo":
-                response = await emotiva.set_all_stereo_mode()
-            elif mode == "auto":
-                response = await emotiva.set_auto_mode()
-            elif mode == "reference_stereo":
-                response = await emotiva.set_reference_stereo_mode()
-            elif mode == "surround_mode":
-                response = await emotiva.set_surround_mode()
-            else:
-                print(f"Unknown mode: {mode}")
-                return 1
-                
+            # Set mode using set_mode
+            response = await controller.set_mode(mode)
             print(f"Mode command response: {response}")
             
         elif args.command == "query":
             # Ensure device is discovered first
-            discovery_result = await emotiva.discover()
-            if discovery_result.get("status") != "success":
+            discovery_result = await controller.discover()
+            if discovery_result.get("status") != "ok":
                 print(f"Discovery failed: {discovery_result.get('message')}")
                 return 1
             
             if args.query_type == "power":
-                response = await emotiva.get_power()
-                print(f"Power status query sent: {response.get('status')}")
-                # Wait a moment for notifications
-                await asyncio.sleep(1.0)
-                print("\nCurrent Power Status:")
-                print("-" * 40)
+                power_status = await controller.get_power()
+                print(f"Power status: {'ON' if power_status else 'OFF'}")
                 
             elif args.query_type == "zone2_power":
-                response = await emotiva.get_zone2_power()
-                print(f"Zone 2 power status query sent: {response.get('status')}")
-                # Wait a moment for notifications
-                await asyncio.sleep(1.0)
-                print("\nCurrent Zone 2 Power Status:")
-                print("-" * 40)
+                # Get the zone2 state and extract power status
+                zone2_state = await controller.get_zone2_state()
+                zone2_power = zone2_state.get("data", {}).get("power") == "true"
+                print(f"Zone 2 power status: {'ON' if zone2_power else 'OFF'}")
                 
             elif args.query_type == "input":
-                await emotiva.subscribe_to_notifications(["input", "audio_input", "video_input"])
-                response = await emotiva.update_properties(["input", "audio_input", "video_input"])
+                await controller.subscribe_to_notifications(["input", "audio_input", "video_input"])
+                response = await controller.update_properties(["input", "audio_input", "video_input"])
                 print(f"Input status query sent: {response.get('status')}")
                 # Wait a moment for notifications
                 await asyncio.sleep(1.0)
-                print("\nCurrent Input Status:")
-                print("-" * 40)
+                input_source = await controller.get_input()
+                print(f"Current input source: {input_source}")
                 
             elif args.query_type == "mode":
-                await emotiva.subscribe_to_notifications(["mode"])
-                response = await emotiva.update_properties(["mode"])
+                await controller.subscribe_to_notifications(["mode"])
+                response = await controller.update_properties(["mode"])
                 print(f"Mode status query sent: {response.get('status')}")
                 # Wait a moment for notifications
                 await asyncio.sleep(1.0)
@@ -498,8 +492,8 @@ async def async_main() -> int:
                 print("-" * 40)
                 
             elif args.query_type == "custom" and args.properties:
-                await emotiva.subscribe_to_notifications(args.properties)
-                response = await emotiva.update_properties(args.properties)
+                await controller.subscribe_to_notifications(args.properties)
+                response = await controller.update_properties(args.properties)
                 print(f"Custom status query sent: {response.get('status')}")
                 # Wait a moment for notifications
                 await asyncio.sleep(1.0)
@@ -518,11 +512,11 @@ async def async_main() -> int:
         await asyncio.sleep(0.5)
         
         # Cleanup resources
-        await emotiva.close()
+        await controller.close()
         
         return 0
         
-    except Error as e:
+    except EmotivaError as e:
         print(f"Error: {e}")
         return 1
     except Exception as e:

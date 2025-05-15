@@ -2,236 +2,323 @@
 UDP notification system for Emotiva devices.
 
 This module provides an asyncio-based notification system that listens for UDP messages
-from Emotiva devices and routes them to registered callbacks. It uses asyncio for
-efficient asynchronous I/O handling.
+from Emotiva devices and routes them to registered callbacks. It implements the observer
+pattern for flexible notification handling.
 """
 
 import socket
 import asyncio
 import logging
 import ipaddress
-from typing import Dict, Callable, Set, Optional, List
+from typing import Dict, Callable, Set, Optional, List, Any, Tuple, Union, Generic, TypeVar, Protocol, cast
+import time
+import xml.etree.ElementTree as ET
+from enum import Enum, auto
+from abc import ABC, abstractmethod
+
+from .protocol import ResponseParser
+from .emotiva_types import (
+    EmotivaNotification, 
+    PropertyNotification, 
+    MenuNotification, 
+    BarDisplayNotification, 
+    KeepAliveNotification, 
+    GoodbyeNotification, 
+    EmotivaNotificationListener,
+    NotificationType as EmotivaNotificationType
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-class AsyncEmotivaNotifier:
-    """Asyncio-based UDP notification system for Emotiva devices.
-    
-    This class manages UDP sockets and routes incoming messages to registered callbacks.
-    It uses asyncio for efficient, non-blocking I/O operations.
-    
-    Attributes:
-        _devices: Dictionary mapping IP addresses to their callback functions
-        _socket: Socket object for notifications
-        _task: Asyncio task for notification listener
-        _lock: Asyncio lock for thread-safe operations
-        _running: Flag to control listener task
-    """
+class ConnectionState(Enum):
+    """Connection states for the Emotiva device."""
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    DISCONNECTING = "disconnecting"
 
-    def __init__(self) -> None:
-        """Initialize the AsyncEmotivaNotifier."""
-        self._devices: Dict[str, Callable[[bytes], None]] = {}
-        self._socket: Optional[socket.socket] = None
-        self._task: Optional[asyncio.Task] = None
-        self._lock = asyncio.Lock()
-        self._running = False
-        self._port: Optional[int] = None
-        self._is_cleaning_up = False
+class NotificationType(Enum):
+    """Types of notifications from Emotiva devices."""
+    STANDARD = "standard"
+    MENU = "menu"
+    BAR = "bar"
+    KEEPALIVE = "keepalive"
+    GOODBYE = "goodbye"
 
-    async def register(self, ip: str, port: int, callback: Callable[[bytes], None]) -> None:
-        """Register a device and its callback for notifications.
+class NotificationFilter:
+    """Filter for notifications based on type, property name, etc."""
+    
+    def __init__(self, 
+                notification_types: Optional[List[NotificationType]] = None,
+                property_names: Optional[List[str]] = None,
+                device_ips: Optional[List[str]] = None):
+        """
+        Initialize a notification filter.
         
         Args:
-            ip: IP address of the device to register
-            port: UDP port to listen on for this device
-            callback: Function to call when data is received from this device
+            notification_types: List of notification types to include
+            property_names: List of property names to include
+            device_ips: List of device IPs to include
         """
-        # Don't allow registration during cleanup
-        if self._is_cleaning_up:
-            _LOGGER.warning("Cannot register device during cleanup")
-            return
-            
-        async with self._lock:
-            # Validate that the IP address format is valid
-            try:
-                socket.inet_aton(ip)
-                _LOGGER.debug("IP address %s validated", ip)
-            except OSError:
-                _LOGGER.error("Invalid IP address format: %s", ip)
-                raise
-            
-            # Create socket if it doesn't exist or if port has changed
-            if self._socket is None or (self._port is not None and self._port != port):
-                # Close existing socket if any
-                if self._socket is not None:
-                    self._socket.close()
-                    self._socket = None
-                
-                # Create new socket
-                self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self._socket.setblocking(False)
-                
-                try:
-                    # Try to bind to any interface on the port
-                    self._socket.bind(('', port))
-                    self._port = port
-                    _LOGGER.debug("Bound socket to all interfaces on port %d", port)
-                except OSError as e:
-                    _LOGGER.warning("Could not bind to all interfaces: %s. Trying localhost...", e)
-                    try:
-                        # Try to bind to localhost only
-                        self._socket.bind(('127.0.0.1', port))
-                        self._port = port
-                        _LOGGER.warning("Bound socket to localhost only on port %d. Notifications may not work correctly.", port)
-                    except OSError as e2:
-                        _LOGGER.error("Failed to bind socket: %s", e2)
-                        self._socket.close()
-                        self._socket = None
-                        raise RuntimeError(f"Cannot create notification listener on port {port}")
-            
-            # Start listener task if not already running
-            if not self._running and self._socket is not None:
-                self._running = True
-                self._task = asyncio.create_task(self._notification_listener())
-                self._task.add_done_callback(self._on_task_done)
-                _LOGGER.debug("Started notification listener task")
-            
-            # Register the device callback
-            self._devices[ip] = callback
-            _LOGGER.debug("Registered device %s for notifications", ip)
+        self.notification_types = notification_types
+        self.property_names = property_names
+        self.device_ips = device_ips
     
-    def _on_task_done(self, task: asyncio.Task) -> None:
-        """Callback for when the notification task completes."""
-        try:
-            # Check if the task raised an exception
-            exc = task.exception()
-            if exc:
-                _LOGGER.error("Notification listener task failed with exception: %s", exc)
-            else:
-                _LOGGER.debug("Notification listener task completed normally")
-        except asyncio.CancelledError:
-            _LOGGER.debug("Notification listener task was cancelled")
-        except Exception as e:
-            _LOGGER.error("Error handling notification task completion: %s", e)
+    def matches(self, notification: EmotivaNotification) -> bool:
+        """
+        Check if a notification matches this filter.
+        
+        Args:
+            notification: Notification to check
+            
+        Returns:
+            True if notification matches filter, False otherwise
+        """
+        # Check device IP
+        if self.device_ips and notification.device_ip not in self.device_ips:
+            return False
+            
+        # Get equivalent EmotivaNotificationType from our internal NotificationType
+        notification_type_map = {
+            NotificationType.STANDARD: EmotivaNotificationType.PROPERTY,
+            NotificationType.MENU: EmotivaNotificationType.MENU,
+            NotificationType.BAR: EmotivaNotificationType.BAR,
+            NotificationType.KEEPALIVE: EmotivaNotificationType.KEEPALIVE,
+            NotificationType.GOODBYE: EmotivaNotificationType.GOODBYE
+        }
+        
+        # Check notification type
+        if self.notification_types:
+            emtiva_types = [notification_type_map.get(nt) for nt in self.notification_types]
+            if notification.notification_type not in emtiva_types:
+                return False
+            
+        # For property notifications, check property name
+        if (self.property_names and 
+            notification.notification_type == EmotivaNotificationType.PROPERTY and
+            isinstance(notification.data, dict) and
+            'properties' in notification.data):
+            
+            # Check if any of the properties match
+            properties = notification.data.get('properties', {})
+            return any(prop_name in properties for prop_name in self.property_names)
+            
+        # All checks passed
+        return True
 
-    async def _notification_listener(self) -> None:
-        """Background task to handle incoming notifications."""
-        _LOGGER.debug("Notification listener started")
+class NotificationRegistry:
+    """
+    Registry for notification listeners.
+    
+    This class manages subscriptions to notifications, allowing listeners to
+    register for specific types of notifications with optional filtering.
+    """
+    
+    def __init__(self):
+        """Initialize the notification registry."""
+        # Map listeners to their filters
+        self._listeners: Dict[EmotivaNotificationListener, List[NotificationFilter]] = {}
+        self._lock = asyncio.Lock()
+    
+    async def register_listener(self, listener: EmotivaNotificationListener, 
+                              filter_: Optional[NotificationFilter] = None) -> None:
+        """
+        Register a notification listener.
         
-        loop = asyncio.get_running_loop()
-        
-        while self._running and self._socket is not None:
-            try:
-                # Use asyncio to wait for data using a manual recvfrom approach
-                # Since sock_recvfrom is not available, we'll use a buffer and manually extract the address
-                data = await loop.sock_recv(self._socket, 4096)
+        Args:
+            listener: The listener to register
+            filter_: Optional filter for notifications
+        """
+        async with self._lock:
+            if listener not in self._listeners:
+                self._listeners[listener] = []
                 
-                # If no data received, continue to the next iteration
-                if not data:
-                    await asyncio.sleep(0.1)
+            if filter_:
+                self._listeners[listener].append(filter_)
+            
+            _LOGGER.debug("Registered notification listener with %s filters", 
+                         len(self._listeners[listener]))
+    
+    async def unregister_listener(self, listener: EmotivaNotificationListener) -> None:
+        """
+        Unregister a notification listener.
+        
+        Args:
+            listener: The listener to unregister
+        """
+        async with self._lock:
+            if listener in self._listeners:
+                self._listeners.pop(listener)
+                _LOGGER.debug("Unregistered notification listener")
+    
+    async def notify(self, notification: EmotivaNotification) -> None:
+        """
+        Notify all matching listeners of a notification.
+        
+        Args:
+            notification: The notification to dispatch
+        """
+        async with self._lock:
+            for listener, filters in self._listeners.items():
+                # If no filters, always notify
+                if not filters:
+                    try:
+                        listener.on_notification(notification)
+                    except Exception as e:
+                        _LOGGER.error("Error in notification listener: %s", e)
                     continue
                 
-                # We can't get the sender address since we're using sock_recv instead of sock_recvfrom
-                # Process the data for all registered devices
-                for device_ip, callback in self._devices.items():
-                    try:
-                        callback(data)
-                    except Exception as e:
-                        _LOGGER.error("Error in notification callback: %s", e)
-            except asyncio.CancelledError:
-                _LOGGER.debug("Notification listener task cancelled")
-                break
-            except Exception as e:
-                if self._running:  # Only log if we're still supposed to be running
-                    _LOGGER.error("Error in notification listener: %s", e)
-                await asyncio.sleep(0.1)
-                
-        _LOGGER.debug("Notification listener stopped")
+                # Check if any filter matches
+                for filter_ in filters:
+                    if filter_.matches(notification):
+                        try:
+                            listener.on_notification(notification)
+                        except Exception as e:
+                            _LOGGER.error("Error in notification listener: %s", e)
+                        break  # Don't notify the same listener multiple times
 
-    async def unregister(self, ip: str) -> None:
-        """Unregister a device from notifications.
+class NotificationParser:
+    """
+    Parser for Emotiva notification packets.
+    
+    This class parses raw notification data into structured notification objects.
+    """
+    
+    @staticmethod
+    def parse_notification(data: bytes, sender_ip: str) -> Optional[EmotivaNotification]:
+        """
+        Parse a notification packet.
         
         Args:
-            ip: IP address of the device to unregister
+            data: Raw notification data
+            sender_ip: IP address of the sender
+            
+        Returns:
+            Parsed notification object or None if parsing failed
         """
-        # Don't allow unregistration during cleanup
-        if self._is_cleaning_up:
-            return
-            
-        async with self._lock:
-            if ip in self._devices:
-                del self._devices[ip]
-                _LOGGER.debug("Unregistered device %s", ip)
-                
-                # If no more devices, stop the listener
-                if not self._devices:
-                    await self.cleanup()
-
-    async def force_stop_listener(self) -> None:
-        """Force the listener task to stop immediately without acquiring the lock."""
-        # Mark that we're running
-        self._running = False
-        
-        # Cancel the task if it exists
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-            try:
-                # Wait for a very short time for the task to cancel
-                await asyncio.wait_for(asyncio.shield(self._task), timeout=0.5)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                # This is expected
-                pass
-            except Exception as e:
-                _LOGGER.error("Error waiting for task cancellation: %s", e)
-                
-    async def cleanup(self) -> None:
-        """Clean up all resources used by the notifier."""
-        # Prevent multiple cleanup calls
-        if self._is_cleaning_up:
-            return
-            
-        self._is_cleaning_up = True
-        
         try:
-            # First try to get the lock, but don't wait too long
-            try:
-                lock_acquired = False
-                lock_acquired = await asyncio.wait_for(self._lock.acquire(), timeout=1.0)
-            except asyncio.TimeoutError:
-                _LOGGER.warning("Could not acquire lock for cleanup, performing forced cleanup")
+            # Parse the XML
+            root = ET.fromstring(data.decode('utf-8'))
             
-            try:
-                # Stop the listener
-                self._running = False
+            # Check the root tag
+            if root.tag == 'emotivaNotify':
+                # Look for special notification types
+                for child in root:
+                    # Check for keepalive
+                    if (child.tag == 'property' and child.get('name') == 'keepalive') or child.tag == 'keepalive':
+                        return KeepAliveNotification(sender_ip, EmotivaNotificationType.KEEPALIVE, None)
+                    
+                    # Check for goodbye
+                    if (child.tag == 'property' and child.get('name') == 'goodbye') or child.tag == 'goodbye':
+                        return GoodbyeNotification(sender_ip, EmotivaNotificationType.GOODBYE, None)
                 
-                # Cancel the task
-                if self._task is not None:
-                    if not self._task.done():
-                        self._task.cancel()
-                        try:
-                            # Wait briefly for the task to cancel
-                            await asyncio.wait_for(asyncio.shield(self._task), timeout=0.5)
-                        except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
-                            # These exceptions are expected
-                            pass
-                    self._task = None
+                # Standard property notification - collect all properties
+                properties: Dict[str, Dict[str, Any]] = {}
+                for child in root:
+                    if child.tag == 'property':
+                        name = child.get('name', '')
+                        if name:
+                            properties[name] = dict(child.attrib)
+                    else:
+                        # Legacy format where property name is the tag
+                        properties[child.tag] = dict(child.attrib)
                 
-                # Close the socket
-                if self._socket is not None:
-                    try:
-                        self._socket.close()
-                        _LOGGER.debug("Closed notification socket for port %d", self._port)
-                    except Exception as e:
-                        _LOGGER.error("Error closing notification socket: %s", e)
-                    self._socket = None
-                    self._port = None
+                return PropertyNotification(
+                    sender_ip, 
+                    EmotivaNotificationType.PROPERTY,
+                    {
+                        'sequence': root.get('sequence', '0'),
+                        'properties': properties
+                    }
+                )
                 
-                # Clear device map
-                self._devices.clear()
-            finally:
-                # Release the lock if we acquired it
-                if lock_acquired:
-                    self._lock.release()
-        finally:
-            self._is_cleaning_up = False
+            elif root.tag == 'emotivaMenuNotify':
+                # Menu notification
+                menu_data = {
+                    'sequence': root.get('sequence', '0'),
+                    'rows': []
+                }
+                
+                # Process menu rows
+                for row in root.findall('row'):
+                    row_data = {
+                        'number': row.get('number', '0'),
+                        'columns': []
+                    }
+                    
+                    # Process columns
+                    for col in row.findall('col'):
+                        col_data = dict(col.attrib)
+                        row_data['columns'].append(col_data)
+                    
+                    menu_data['rows'].append(row_data)
+                
+                return MenuNotification(sender_ip, EmotivaNotificationType.MENU, menu_data)
+                
+            elif root.tag == 'emotivaBarNotify':
+                # Bar notification
+                bar_data = {
+                    'sequence': root.get('sequence', '0'),
+                    'bars': []
+                }
+                
+                # Process bars
+                for bar in root.findall('bar'):
+                    bar_type = bar.get('type', '')
+                    
+                    # Create bar info based on type
+                    if bar_type == 'off':
+                        bar_data['bars'].append({'type': 'off'})
+                    elif bar_type == 'bigText':
+                        bar_data['bars'].append({
+                            'type': 'bigText',
+                            'text': bar.get('text', '')
+                        })
+                    elif bar_type == 'bar':
+                        bar_data['bars'].append({
+                            'type': 'bar',
+                            'text': bar.get('text', ''),
+                            'value': bar.get('value', '0'),
+                            'min': bar.get('min', '0'),
+                            'max': bar.get('max', '100'),
+                            'units': bar.get('units', '')
+                        })
+                
+                return BarDisplayNotification(sender_ip, EmotivaNotificationType.BAR, bar_data)
+                
+        except Exception as e:
+            _LOGGER.warning("Error parsing notification: %s", e)
+            
+        return None
+
+class NotificationDispatcher:
+    """
+    Dispatches notifications to registered listeners.
+    
+    This class handles the parsing and routing of notifications to the appropriate listeners.
+    """
+    
+    def __init__(self, registry: NotificationRegistry):
+        """
+        Initialize the notification dispatcher.
+        
+        Args:
+            registry: The notification registry to use
+        """
+        self.registry = registry
+        self._lock = asyncio.Lock()
+    
+    async def dispatch_notification(self, data: bytes, sender_ip: str) -> None:
+        """
+        Dispatch a notification to registered listeners.
+        
+        Args:
+            data: Raw notification data
+            sender_ip: IP address of the sender
+        """
+        # Parse the notification
+        notification = NotificationParser.parse_notification(data, sender_ip)
+        
+        if notification:
+            # Notify all matching listeners
+            await self.registry.notify(notification)

@@ -1,6 +1,8 @@
-# PyEmotivaXMC2
+# PyMotivaXMC2
 
-Python interface for controlling Emotiva XMC-series processors over the network.
+Python async library for controlling eMotiva XMC-series processors over the network.
+
+This library is a full rewrite of the original [pymotiva](https://github.com/thecynic/pymotiva) library.
 
 ## Features
 

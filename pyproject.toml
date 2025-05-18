@@ -1,65 +1,12 @@
-[build-system]
-requires = ["setuptools>=42", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "pymotivaxmc2"
-version = "0.5.0"
-description = "A Python library for controlling eMotiva A/V processors"
+version = "0.6.0"
+description = "Async Python library for Emotiva XMC-2 and related devices"
 readme = "README.md"
-requires-python = ">=3.7"
-license = "MIT"
-authors = [
-    {name = "Dmitri Romanovskij", email = "dmitri.romanovski@gmail.com"}
-]
-dependencies = [
-    "typing-extensions>=3.7.4",
-    "setuptools>=65.5.1",
-]
+authors = [{name = "eMotiva Integration"}]
+license = {text = "MIT"}
+dependencies = []
+requires-python = ">=3.11"
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=6.0",
-    "pytest-cov>=2.0",
-    "pytest-asyncio>=0.17.0",
-    "black>=21.0",
-    "mypy>=0.9",
-    "flake8>=3.9"
-]
-
-[project.scripts]
-emotiva-cli = "pymotivaxmc2.cli:main"
-
-[tool.setuptools]
-packages = ["pymotivaxmc2"]
-package-data = {"pymotivaxmc2" = ["py.typed"]}
-
-[project.urls]
-Repository = "https://github.com/droman42/pymotivaxmc2"
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-addopts = "-v --cov=pymotivaxmc2"
-
-[tool.black]
-line-length = 88
-target-version = ["py37"]
-include = '\.pyi?$'
-
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-line_length = 88
-
-[tool.mypy]
-python_version = "3.8"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-check_untyped_defs = true
-disallow_incomplete_defs = true
-disallow_any_generics = false
-no_implicit_optional = true
-show_error_codes = true 
+[tool.setuptools.packages.find]
+where = ["pymotivaxmc2"]

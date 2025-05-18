@@ -33,3 +33,4 @@ test_udp.py
 async.md
 pyrightconfig.json
 .lock
+backup/

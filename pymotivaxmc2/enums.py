@@ -216,7 +216,6 @@ class Property(StrEnum):
     ZONE2_POWER = "zone2_power"
     ZONE2_VOLUME = "zone2_volume"
 
-
 class Input(StrEnum):
     COAX1 = "coax1"
     COAX2 = "coax2"

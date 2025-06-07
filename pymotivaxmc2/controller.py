@@ -168,7 +168,7 @@ class EmotivaController:
     async def power_toggle(self, *, zone: Zone = Zone.MAIN):
         """Toggle power for the specified zone."""
         _LOGGER.info("Toggling power for %s zone", zone.name)
-        cmd = Command.ZONE2_POWER if zone is Zone.ZONE2 else Command.POWER
+        cmd = Command.ZONE2_POWER if zone is Zone.ZONE2 else Command.STANDBY
         await self._protocol.send_command(cmd.value)
 
     async def set_volume(self, db: float, *, zone: Zone = Zone.MAIN):

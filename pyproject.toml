@@ -1,6 +1,6 @@
 [project]
 name = "pymotivaxmc2"
-version = "0.6.0"
+version = "0.6.5"
 description = "Async Python library for Emotiva XMC-2 and related devices"
 readme = "README.md"
 authors = [{name = "eMotiva Integration"}]
@@ -36,6 +36,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["pymotivaxmc2*"]
+exclude = ["tests*", "docs*", "*.tests*", "*.tests.*"]
 
 [tool.black]
 line-length = 100

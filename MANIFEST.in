@@ -1,41 +1,40 @@
-# Include license and readme file
-include LICENSE
+# Include essential project files
 include README.md
-include requirements.txt
-exclude async.md
+include LICENSE
+include pyproject.toml
 
-# Include package data
+# Include source code
 recursive-include pymotivaxmc2 *.py
-include pymotivaxmc2/py.typed
 
-# Exclude git files
-exclude .gitignore
-exclude .gitattributes
-exclude .git/
-exclude .git*
-
-# Exclude test files and directories
-exclude test_command.py
-exclude test_udp.py
-exclude pymotivaxmc2_demo.ipynb
-exclude tests/
+# Exclude development and testing files
 recursive-exclude tests *
+recursive-exclude docs *
+recursive-exclude .github *
+recursive-exclude .pytest_cache *
+recursive-exclude __pycache__ *
 
-# Exclude virtual environments
-exclude venv/
-exclude env/
-exclude .env/
-exclude bin/
-exclude include/
-exclude lib/
-exclude lib64/
-exclude pyvenv.cfg
+# Exclude development configuration files
+exclude .gitignore
+exclude .pre-commit-config.yaml
+exclude .coveragerc
+exclude .python-version
+exclude uv.lock
+exclude *.egg-info
 
-# Exclude IDE folders
-exclude .idea/
-exclude .vscode/
+# Exclude IDE and editor files
+exclude .vscode
+exclude .idea
+exclude *.swp
+exclude *.swo
+exclude *~
 
-# Exclude distribution files
-exclude dist/
-exclude build/
-exclude *.egg-info/ 
+# Exclude OS files
+exclude .DS_Store
+exclude Thumbs.db
+
+# Exclude temporary files
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude __pycache__
+global-exclude *.so 

@@ -1,6 +1,6 @@
 [project]
 name = "pymotivaxmc2"
-version = "0.6.5"
+version = "0.6.6"
 description = "Async Python library for Emotiva XMC-2 and related devices"
 readme = "README.md"
 authors = [{name = "eMotiva Integration"}]

@@ -42,36 +42,59 @@ class SocketManager:
         self._loop = asyncio.get_running_loop()
         self._queues: Dict[int, asyncio.Queue] = {}
         self._transports: Dict[int, asyncio.DatagramTransport] = {}
+        
+        # Phase 1 Fix: Add port binding synchronization
+        self._start_lock = asyncio.Lock()
+        
         _LOGGER.info("SocketManager initialized for device %s with ports %s", device_host, ports)
 
     async def start(self):
-        _LOGGER.debug("Starting socket manager for %s", self.device_host)
-        for name, port in self.ports.items():
-            if port in self._transports:
-                _LOGGER.debug("Port %d already bound for %s", port, name)
-                continue
-            
-            _LOGGER.debug("Binding to port %d for %s", port, name)
-            queue: asyncio.Queue = asyncio.Queue()
+        """Start socket manager with port binding protection."""
+        # Phase 1 Fix: Protect against concurrent start() calls
+        async with self._start_lock:
+            _LOGGER.debug("Starting socket manager for %s", self.device_host)
+            for name, port in self.ports.items():
+                if port in self._transports:
+                    _LOGGER.debug("Port %d already bound for %s", port, name)
+                    continue
+                
+                _LOGGER.debug("Binding to port %d for %s", port, name)
+                queue: asyncio.Queue = asyncio.Queue()
+                try:
+                    transport, _ = await self._loop.create_datagram_endpoint(
+                        lambda: _DatagramProto(queue),
+                        local_addr=("0.0.0.0", port),
+                    )
+                    self._queues[port] = queue
+                    self._transports[port] = transport
+                    _LOGGER.info("Successfully bound to port %d for %s", port, name)
+                except OSError as e:
+                    _LOGGER.error("Failed to bind to port %d for %s: %s", port, name, e)
+                    # Phase 1 Fix: Clean up partial state on failure
+                    await self._cleanup_partial_state()
+                    raise
+
+    async def _cleanup_partial_state(self):
+        """Clean up any partially created transports."""
+        for port, transport in list(self._transports.items()):
             try:
-                transport, _ = await self._loop.create_datagram_endpoint(
-                    lambda: _DatagramProto(queue),
-                    local_addr=("0.0.0.0", port),
-                )
-                self._queues[port] = queue
-                self._transports[port] = transport
-                _LOGGER.info("Successfully bound to port %d for %s", port, name)
-            except OSError as e:
-                _LOGGER.error("Failed to bind to port %d for %s: %s", port, name, e)
-                raise
+                transport.close()
+                _LOGGER.debug("Cleaned up transport for port %d", port)
+            except Exception as e:
+                _LOGGER.warning("Error cleaning up transport for port %d: %s", port, e)
+        self._transports.clear()
+        self._queues.clear()
 
     async def stop(self):
-        _LOGGER.debug("Stopping socket manager")
-        for port, t in self._transports.items():
-            _LOGGER.debug("Closing transport for port %d", port)
-            t.close()
-        self._transports.clear()
-        _LOGGER.info("Socket manager stopped")
+        """Stop socket manager with proper cleanup."""
+        # Phase 1 Fix: Use same lock for stop to ensure consistency
+        async with self._start_lock:
+            _LOGGER.debug("Stopping socket manager")
+            for port, t in self._transports.items():
+                _LOGGER.debug("Closing transport for port %d", port)
+                t.close()
+            self._transports.clear()
+            _LOGGER.info("Socket manager stopped")
 
     async def send(self, payload: bytes, port_name: str = "controlPort"):
         port = self.ports[port_name]

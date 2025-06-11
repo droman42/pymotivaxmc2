@@ -13,3 +13,20 @@ class InvalidCommandError(EmotivaError):
 
 class DeviceOfflineError(EmotivaError):
     """Raised when keep‑alives lost and device marked offline."""
+
+
+# Phase 2 Fix: Additional error types for improved error categorization
+class ConnectionError(EmotivaError):
+    """Raised when connection-related operations fail."""
+
+class NetworkError(EmotivaError):
+    """Raised when network-level operations fail."""
+    
+class ProtocolError(EmotivaError):
+    """Raised when protocol-level errors occur."""
+    
+class ConcurrencyError(EmotivaError):
+    """Raised when concurrency limits are exceeded."""
+    
+class RetryExhaustedError(EmotivaError):
+    """Raised when all retry attempts have been exhausted."""

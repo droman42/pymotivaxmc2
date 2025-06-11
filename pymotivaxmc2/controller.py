@@ -32,86 +32,115 @@ class EmotivaController:
         self._socket_mgr: SocketManager | None = None
         self._protocol: Protocol | None = None
         self._dispatcher: Dispatcher | None = None
+        
+        # Phase 1 Fix: Add connection state protection
+        self._connection_lock = asyncio.Lock()
+        self._connected = False
+        
         _LOGGER.info("Initialized controller for device at %s (timeout=%.1f)", host, timeout)
 
     # ---------- connection -------------------------------------------------
     async def connect(self):
         """Discover device, bind sockets, start dispatcher."""
-        _LOGGER.info("Connecting to device at %s", self.host)
-        disc = Discovery(self.host, timeout=self.timeout)
-        try:
-            self._info = await disc.fetch_transponder()
-            _LOGGER.debug("Device transponder info: %s", self._info)
-        except Exception as e:
-            _LOGGER.error("Failed to discover device: %s", e)
-            raise
+        # Phase 1 Fix: Protect against concurrent connect() calls
+        async with self._connection_lock:
+            if self._connected:
+                _LOGGER.debug("Already connected to device at %s", self.host)
+                return
+                
+            _LOGGER.info("Connecting to device at %s", self.host)
+            disc = Discovery(self.host, timeout=self.timeout)
+            try:
+                self._info = await disc.fetch_transponder()
+                _LOGGER.debug("Device transponder info: %s", self._info)
+            except Exception as e:
+                _LOGGER.error("Failed to discover device: %s", e)
+                raise
 
-        # Get protocol version from discovery response
-        device_protocol_version = self._info.get("protocolVersion", "2.0")
-        
-        # Use the lower of the device's supported version and our max supported version
-        if self.protocol_max < device_protocol_version:
-            protocol_version = self.protocol_max
-            _LOGGER.info("Device supports protocol %s but we're limiting to %s", 
-                       device_protocol_version, protocol_version)
-        else:
-            protocol_version = device_protocol_version
-            _LOGGER.info("Using protocol version %s", protocol_version)
+            # Get protocol version from discovery response
+            device_protocol_version = self._info.get("protocolVersion", "2.0")
+            
+            # Use the lower of the device's supported version and our max supported version
+            if self.protocol_max < device_protocol_version:
+                protocol_version = self.protocol_max
+                _LOGGER.info("Device supports protocol %s but we're limiting to %s", 
+                           device_protocol_version, protocol_version)
+            else:
+                protocol_version = device_protocol_version
+                _LOGGER.info("Using protocol version %s", protocol_version)
 
-        ports = {
-            "controlPort": self._info.get("controlPort", 7002),
-            "notifyPort": self._info.get("notifyPort", 7003),
-            "menuNotifyPort": self._info.get("menuNotifyPort", self._info.get("notifyPort", 7003)),
-        }
-        _LOGGER.info("Using ports: %s", ports)
-        
-        try:
-            self._socket_mgr = SocketManager(self.host, ports)
-            await self._socket_mgr.start()
-            _LOGGER.debug("Socket manager started")
-        except Exception as e:
-            _LOGGER.error("Failed to start socket manager: %s", e)
-            raise
+            ports = {
+                "controlPort": self._info.get("controlPort", 7002),
+                "notifyPort": self._info.get("notifyPort", 7003),
+                "menuNotifyPort": self._info.get("menuNotifyPort", self._info.get("notifyPort", 7003)),
+            }
+            _LOGGER.info("Using ports: %s", ports)
+            
+            try:
+                self._socket_mgr = SocketManager(self.host, ports)
+                await self._socket_mgr.start()
+                _LOGGER.debug("Socket manager started")
+            except Exception as e:
+                _LOGGER.error("Failed to start socket manager: %s", e)
+                # Reset state on failure
+                self._socket_mgr = None
+                raise
 
-        try:
-            # Initialize Protocol with the determined protocol version
-            self._protocol = Protocol(self._socket_mgr, protocol_version=protocol_version)
-            self._dispatcher = Dispatcher(self._socket_mgr, "notifyPort")
-            await self._dispatcher.start()
-            _LOGGER.info("Successfully connected to device at %s using protocol %s", 
-                       self.host, protocol_version)
-        except Exception as e:
-            _LOGGER.error("Failed to initialize protocol or dispatcher: %s", e)
-            if self._socket_mgr:
-                await self._socket_mgr.stop()
-            raise
+            try:
+                # Initialize Protocol with the determined protocol version
+                self._protocol = Protocol(self._socket_mgr, protocol_version=protocol_version)
+                self._dispatcher = Dispatcher(self._socket_mgr, "notifyPort")
+                await self._dispatcher.start()
+                
+                # Phase 1 Fix: Set connected state only after successful initialization
+                self._connected = True
+                _LOGGER.info("Successfully connected to device at %s using protocol %s", 
+                           self.host, protocol_version)
+            except Exception as e:
+                _LOGGER.error("Failed to initialize protocol or dispatcher: %s", e)
+                # Cleanup on failure
+                if self._socket_mgr:
+                    await self._socket_mgr.stop()
+                self._socket_mgr = None
+                self._protocol = None
+                self._dispatcher = None
+                raise
 
     async def disconnect(self):
         """Unsubscribe & close sockets."""
-        _LOGGER.info("Disconnecting from device at %s", self.host)
-        if not self._protocol:
-            _LOGGER.debug("Already disconnected")
-            return
+        # Phase 1 Fix: Protect against concurrent disconnect() calls
+        async with self._connection_lock:
+            if not self._connected or not self._protocol:
+                _LOGGER.debug("Already disconnected")
+                return
+                
+            _LOGGER.info("Disconnecting from device at %s", self.host)
             
-        try:
-            _LOGGER.debug("Unsubscribing from all properties")
-            # Use the proper unsubscribe function with an empty property list
-            await self._socket_mgr.send(build_unsubscribe([]), "controlPort")
-            
-            _LOGGER.debug("Stopping dispatcher")
-            await self._dispatcher.stop()
-            
-            _LOGGER.debug("Stopping socket manager")
-            await self._socket_mgr.stop()
-            
-            _LOGGER.info("Successfully disconnected from device at %s", self.host)
-        except Exception as e:
-            _LOGGER.error("Error during disconnect: %s", e)
-            # Still attempt to clean up
-            with contextlib.suppress(Exception):
+            try:
+                _LOGGER.debug("Unsubscribing from all properties")
+                # Use the proper unsubscribe function with an empty property list
+                await self._socket_mgr.send(build_unsubscribe([]), "controlPort")
+                
+                _LOGGER.debug("Stopping dispatcher")
                 await self._dispatcher.stop()
-            with contextlib.suppress(Exception):
+                
+                _LOGGER.debug("Stopping socket manager")
                 await self._socket_mgr.stop()
+                
+                _LOGGER.info("Successfully disconnected from device at %s", self.host)
+            except Exception as e:
+                _LOGGER.error("Error during disconnect: %s", e)
+                # Still attempt to clean up
+                with contextlib.suppress(Exception):
+                    await self._dispatcher.stop()
+                with contextlib.suppress(Exception):
+                    await self._socket_mgr.stop()
+            finally:
+                # Phase 1 Fix: Always reset state after disconnect attempt
+                self._connected = False
+                self._socket_mgr = None
+                self._protocol = None
+                self._dispatcher = None
 
     # ---------- subscription helpers ---------------------------------------
     async def subscribe(self, props: Property | Sequence[Property]):

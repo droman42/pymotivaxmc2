@@ -233,17 +233,30 @@ class TestDisconnect:
         controller._protocol = MagicMock()
         controller._dispatcher = AsyncMock()
         
+        # Phase 1 Fix: Set connected state for disconnect test
+        controller._connected = True
+        
         return controller
 
     @pytest.mark.asyncio
     async def test_disconnect_success(self, connected_controller):
         """Test successful disconnection."""
+        # Capture mocks before disconnect (since disconnect will reset them to None)
+        socket_mgr_mock = connected_controller._socket_mgr
+        dispatcher_mock = connected_controller._dispatcher
+        
         await connected_controller.disconnect()
         
-        # Verify cleanup calls
-        connected_controller._socket_mgr.send.assert_called_once()
-        connected_controller._dispatcher.stop.assert_called_once()
-        connected_controller._socket_mgr.stop.assert_called_once()
+        # Verify cleanup calls on the captured mocks
+        socket_mgr_mock.send.assert_called_once()
+        dispatcher_mock.stop.assert_called_once()
+        socket_mgr_mock.stop.assert_called_once()
+        
+        # Verify state reset
+        assert connected_controller._connected is False
+        assert connected_controller._socket_mgr is None
+        assert connected_controller._protocol is None
+        assert connected_controller._dispatcher is None
 
     @pytest.mark.asyncio
     async def test_disconnect_not_connected(self):

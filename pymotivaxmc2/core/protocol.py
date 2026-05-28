@@ -87,11 +87,34 @@ class Protocol:
             raise last_exception
 
     async def request_properties(self, properties: list[str], timeout: float = 2.0) -> dict[str, str]:
-        """Request properties with improved error handling and timeout management."""
+        """Request properties and return a name -> value mapping.
+
+        This is a thin wrapper over :meth:`request_properties_full` that discards
+        the per-property ``visible`` attribute, preserving the historical return
+        shape. Use :meth:`request_properties_full` when the visibility flag is
+        needed (e.g. reading Input Button names; see doc Update response
+        Emotiva_Remote_Interface_Description.md lines 427-439).
+        """
+        full = await self.request_properties_full(properties, timeout=timeout)
+        return {name: attrs["value"] for name, attrs in full.items()}
+
+    async def request_properties_full(
+        self, properties: list[str], timeout: float = 2.0
+    ) -> dict[str, dict[str, Any]]:
+        """Request properties and return full attributes per property.
+
+        Returns a mapping ``{name: {"value": str, "visible": bool}}``.
+
+        The ``visible`` attribute is reported by the device in the Update
+        response (doc Emotiva_Remote_Interface_Description.md lines 427-439, e.g.
+        ``<property name="source" value="HDMI 1" visible="true" status="ack"/>``)
+        and is defaulted to ``True`` when absent (e.g. Protocol 2.0 responses,
+        which the doc only specifies with element names and no visible flag).
+        """
         # Phase 2 Fix: Apply concurrency limits to property requests
         async with self._command_semaphore:
             _LOGGER.info("Requesting properties: %s (timeout=%.1f)", properties, timeout)
-            
+
             # Phase 2 Fix: Retry property requests with backoff
             last_exception = None
             for attempt in range(self._max_retries):
@@ -100,46 +123,52 @@ class Protocol:
                     adaptive_timeout = timeout
                     if attempt > 0:
                         adaptive_timeout = timeout * (1.5 ** attempt)
-                        _LOGGER.debug("Property request retry %d with timeout %.2f", 
+                        _LOGGER.debug("Property request retry %d with timeout %.2f",
                                     attempt + 1, adaptive_timeout)
-                    
+
                     await self.socket_mgr.send(build_update(properties, self.protocol_version), "controlPort")
-                    
-                    results = {}
+
+                    results: dict[str, dict[str, Any]] = {}
                     start_time = asyncio.get_event_loop().time()
                     remaining_time = adaptive_timeout
-                    
+
                     while len(results) < len(properties) and remaining_time > 0:
                         try:
                             xml_bytes, _ = await self.socket_mgr.recv("controlPort", timeout=remaining_time)
                             xml = parse_xml(xml_bytes)
-                            
+
                             if xml.tag == "emotivaNotify" or xml.tag == "emotivaUpdate":
                                 # Protocol 3.0+ uses property elements with name attributes
                                 if self.protocol_version >= "3.0":
                                     for prop_elem in xml.findall("property"):
                                         prop_name = prop_elem.get("name")
                                         if prop_name in properties:
-                                            results[prop_name] = prop_elem.get("value", "")
-                                            _LOGGER.debug("Received property '%s' = '%s' (v3.0+ format)", 
+                                            results[prop_name] = {
+                                                "value": prop_elem.get("value", ""),
+                                                "visible": prop_elem.get("visible", "true") == "true",
+                                            }
+                                            _LOGGER.debug("Received property '%s' = %s (v3.0+ format)",
                                                         prop_name, results[prop_name])
                                 # Protocol 2.0 uses direct element names
                                 else:
                                     for prop_elem in xml:
                                         if prop_elem.tag in properties:
-                                            results[prop_elem.tag] = prop_elem.text or prop_elem.get("value", "")
-                                            _LOGGER.debug("Received property '%s' = '%s' (v2.0 format)",
+                                            results[prop_elem.tag] = {
+                                                "value": prop_elem.text or prop_elem.get("value", ""),
+                                                "visible": prop_elem.get("visible", "true") == "true",
+                                            }
+                                            _LOGGER.debug("Received property '%s' = %s (v2.0 format)",
                                                         prop_elem.tag, results[prop_elem.tag])
                             else:
                                 _LOGGER.debug("Received unexpected tag '%s'", xml.tag)
-                                
+
                             # Update remaining time
                             elapsed = asyncio.get_event_loop().time() - start_time
                             remaining_time = adaptive_timeout - elapsed
                         except asyncio.TimeoutError:
                             _LOGGER.warning("Timeout waiting for more property responses")
                             break
-                    
+
                     # Log completion status
                     if len(results) == len(properties):
                         _LOGGER.info("Received all requested properties (attempt %d)", attempt + 1)
@@ -153,20 +182,21 @@ class Protocol:
                         else:
                             _LOGGER.warning("Missing properties in final response: %s", missing)
                             return results
-                            
+
                 except Exception as e:
                     last_exception = e
                     if attempt < self._max_retries - 1:
-                        _LOGGER.warning("Property request error on attempt %d: %s, retrying", 
+                        _LOGGER.warning("Property request error on attempt %d: %s, retrying",
                                       attempt + 1, e)
                         await asyncio.sleep(self._base_backoff * (attempt + 1))
                     else:
-                        _LOGGER.error("Property request failed after %d attempts: %s", 
+                        _LOGGER.error("Property request failed after %d attempts: %s",
                                     self._max_retries, e)
                         raise
-            
+
             if last_exception:
                 raise last_exception
+            return {}
 
     async def subscribe(self, properties: list[str]) -> Dict[str, Any]:
         """Subscribe to property updates with retry logic."""

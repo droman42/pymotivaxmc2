@@ -238,6 +238,67 @@ class TestRequestProperties:
         assert isinstance(result, dict)
 
 
+class TestRequestPropertiesFull:
+    """Test cases for Protocol.request_properties_full (value + visible)."""
+
+    @pytest.fixture
+    def mock_socket_mgr(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def protocol_v3(self, mock_socket_mgr):
+        return Protocol(mock_socket_mgr, protocol_version="3.1")
+
+    @pytest.fixture
+    def protocol_v2(self, mock_socket_mgr):
+        return Protocol(mock_socket_mgr, protocol_version="2.0")
+
+    @pytest.mark.asyncio
+    async def test_full_v3_includes_visible(self, protocol_v3, mock_socket_mgr):
+        """v3.0+ Update response carries the visible attribute per property."""
+        notify_xml = b'''<?xml version="1.0"?>
+        <emotivaUpdate>
+            <property name="input_1" value="ZAPPITI" visible="true" status="ack"/>
+            <property name="input_8" value="HDMI 8" visible="false" status="ack"/>
+        </emotivaUpdate>'''
+        mock_socket_mgr.recv.return_value = (notify_xml, None)
+
+        result = await protocol_v3.request_properties_full(
+            ["input_1", "input_8"], timeout=1.0
+        )
+
+        assert result == {
+            "input_1": {"value": "ZAPPITI", "visible": True},
+            "input_8": {"value": "HDMI 8", "visible": False},
+        }
+
+    @pytest.mark.asyncio
+    async def test_full_visible_defaults_true(self, protocol_v3, mock_socket_mgr):
+        """Missing visible attribute defaults to True."""
+        notify_xml = b'''<?xml version="1.0"?>
+        <emotivaUpdate>
+            <property name="power" value="On"/>
+        </emotivaUpdate>'''
+        mock_socket_mgr.recv.return_value = (notify_xml, None)
+
+        result = await protocol_v3.request_properties_full(["power"], timeout=1.0)
+
+        assert result == {"power": {"value": "On", "visible": True}}
+
+    @pytest.mark.asyncio
+    async def test_request_properties_wraps_full(self, protocol_v3, mock_socket_mgr):
+        """request_properties returns value-only, preserving the old shape."""
+        notify_xml = b'''<?xml version="1.0"?>
+        <emotivaUpdate>
+            <property name="input_1" value="ZAPPITI" visible="false"/>
+        </emotivaUpdate>'''
+        mock_socket_mgr.recv.return_value = (notify_xml, None)
+
+        result = await protocol_v3.request_properties(["input_1"], timeout=1.0)
+
+        assert result == {"input_1": "ZAPPITI"}
+
+
 class TestSubscribe:
     """Test cases for Protocol.subscribe method."""
 

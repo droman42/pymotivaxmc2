@@ -14,7 +14,7 @@ from .exceptions import (
 )
 from .core.logging import setup_logging
 
-__version__ = "0.2.0"
+__version__ = "0.6.8"
 __all__ = [
     "EmotivaController",
     "Command",

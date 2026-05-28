@@ -41,6 +41,11 @@ class TestEmotivaControllerInit:
         assert controller.timeout == 10.0
         assert controller.protocol_max == "2.0"
 
+    def test_init_ack_timeout(self):
+        """ack_timeout defaults to 2.0 and is configurable."""
+        assert EmotivaController("192.168.1.100").ack_timeout == 2.0
+        assert EmotivaController("192.168.1.100", ack_timeout=4.5).ack_timeout == 4.5
+
 
 class TestConnect:
     """Test cases for EmotivaController.connect method."""
@@ -103,7 +108,8 @@ class TestConnect:
             # Verify protocol setup
             mock_protocol_cls.assert_called_once_with(
                 mock_socket_mgr,
-                protocol_version="3.1"
+                protocol_version="3.1",
+                ack_timeout=2.0
             )
             
             # Verify dispatcher setup
@@ -151,7 +157,8 @@ class TestConnect:
             # Should use controller's max version, not device's
             mock_protocol_cls.assert_called_once_with(
                 mock_socket_mgr,
-                protocol_version="3.1"  # Controller's max
+                protocol_version="3.1",  # Controller's max
+                ack_timeout=2.0
             )
 
     @pytest.mark.asyncio
@@ -555,6 +562,76 @@ class TestOtherMethods:
         connected_controller._protocol.send_command.assert_called_once_with(
             Command.HDMI2.value
         )
+
+    @pytest.mark.asyncio
+    async def test_select_source_int(self, connected_controller):
+        """Selecting a logical source by Input number sends source_N."""
+        await connected_controller.select_source(3)
+
+        connected_controller._protocol.send_command.assert_called_once_with(
+            Command.SOURCE_3.value
+        )
+
+    @pytest.mark.asyncio
+    async def test_select_source_tuner(self, connected_controller):
+        """Selecting the tuner source sends source_tuner."""
+        await connected_controller.select_source("tuner")
+
+        connected_controller._protocol.send_command.assert_called_once_with(
+            Command.SOURCE_TUNER.value
+        )
+
+    @pytest.mark.asyncio
+    async def test_select_source_bounds(self, connected_controller):
+        """source_1 and source_8 are the valid integer bounds."""
+        await connected_controller.select_source(1)
+        await connected_controller.select_source(8)
+
+        connected_controller._protocol.send_command.assert_has_calls([
+            call(Command.SOURCE_1.value),
+            call(Command.SOURCE_8.value),
+        ])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad", [0, 9, -1, "hdmi1", True, 1.5])
+    async def test_select_source_invalid(self, connected_controller, bad):
+        """Out-of-range or non-source arguments raise InvalidArgumentError."""
+        with pytest.raises(InvalidArgumentError):
+            await connected_controller.select_source(bad)
+
+        connected_controller._protocol.send_command.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_select_input_still_uses_connector(self, connected_controller):
+        """select_input must remain a raw connector switch (regression guard)."""
+        await connected_controller.select_input(Input.HDMI1)
+
+        connected_controller._protocol.send_command.assert_called_once_with(
+            Command.HDMI1.value
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_input_names(self, connected_controller):
+        """get_input_names returns name + visibility keyed by button number."""
+        mock_result = {
+            "input_1": {"value": "ZAPPITI", "visible": True},
+            "input_2": {"value": "APPLE TV", "visible": True},
+            "input_8": {"value": "HDMI 8", "visible": False},
+        }
+        connected_controller._protocol.request_properties_full.return_value = mock_result
+
+        result = await connected_controller.get_input_names(timeout=1.0)
+
+        connected_controller._protocol.request_properties_full.assert_called_once_with(
+            ["input_1", "input_2", "input_3", "input_4",
+             "input_5", "input_6", "input_7", "input_8"],
+            timeout=1.0,
+        )
+        assert result == {
+            1: {"name": "ZAPPITI", "visible": True},
+            2: {"name": "APPLE TV", "visible": True},
+            8: {"name": "HDMI 8", "visible": False},
+        }
 
     @pytest.mark.asyncio
     async def test_status_method(self, connected_controller):

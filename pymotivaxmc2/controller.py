@@ -23,11 +23,15 @@ class EmotivaController:
         host: IP or hostname of device.
         timeout: Discovery timeout seconds.
         protocol_max: Maximum protocol version to use.
+        ack_timeout: Seconds to wait for an ``<emotivaAck>`` before retrying a
+            command (passed through to the underlying Protocol).
     """
-    def __init__(self, host: str, *, timeout: float = 5.0, protocol_max: str = "3.1"):
+    def __init__(self, host: str, *, timeout: float = 5.0, protocol_max: str = "3.1",
+                 ack_timeout: float = 2.0):
         self.host = host
         self.timeout = timeout
         self.protocol_max = protocol_max
+        self.ack_timeout = ack_timeout
         self._info: Dict[str, Any] | None = None
         self._socket_mgr: SocketManager | None = None
         self._protocol: Protocol | None = None
@@ -88,7 +92,8 @@ class EmotivaController:
 
             try:
                 # Initialize Protocol with the determined protocol version
-                self._protocol = Protocol(self._socket_mgr, protocol_version=protocol_version)
+                self._protocol = Protocol(self._socket_mgr, protocol_version=protocol_version,
+                                          ack_timeout=self.ack_timeout)
                 self._dispatcher = Dispatcher(self._socket_mgr, "notifyPort")
                 await self._dispatcher.start()
                 
@@ -248,6 +253,71 @@ class EmotivaController:
         except KeyError:
             _LOGGER.error("Command not found for input: %s", input_value)
             raise InvalidArgumentError(f"Command not found for input {input_value}")
+
+    async def select_source(self, source: int | str):
+        """Select a logical source ("Input N" button), loading its A/V profile.
+
+        Unlike :meth:`select_input` (which selects a raw physical connector such
+        as ``hdmi1``), this issues the ``source_N`` / ``source_tuner`` commands
+        that mirror the physical remote's "Input N" buttons. These load the full
+        configured source profile and carry the user-assigned input name.
+
+        Protocol reference (docs/Emotiva_Remote_Interface_Description.md):
+        - ``source_1`` .. ``source_8`` = "Set source to Input N" (lines 450-457)
+        - ``source_tuner`` = "Set source to Tuner" (line 449)
+        Each is a standard command transaction (section 3.2, lines 238-261):
+        ``<emotivaControl><source_N value="0" ack="yes"/></emotivaControl>``,
+        acknowledged with ``<emotivaAck><source_N status="ack"/></emotivaAck>``.
+
+        Args:
+            source: Integer 1-8 for ``source_1`` .. ``source_8``, or the string
+                ``"tuner"`` for ``source_tuner``.
+
+        Raises:
+            InvalidArgumentError: If the source is not 1-8 or ``"tuner"``.
+        """
+        if isinstance(source, str) and source.strip().lower() == "tuner":
+            cmd = Command.SOURCE_TUNER
+            label = "tuner"
+        elif isinstance(source, bool):
+            # bool is a subclass of int; reject explicitly to avoid True -> source_1
+            raise InvalidArgumentError(f"Invalid source: {source!r}")
+        elif isinstance(source, int) and 1 <= source <= 8:
+            cmd = Command[f"SOURCE_{source}"]
+            label = f"Input {source}"
+        else:
+            _LOGGER.error("Invalid source: %r", source)
+            raise InvalidArgumentError(
+                f"Invalid source {source!r}; expected an integer 1-8 or 'tuner'"
+            )
+
+        _LOGGER.info("Selecting source: %s (%s)", label, cmd.value)
+        await self._protocol.send_command(cmd.value)
+
+    async def get_input_names(self, *, timeout: float = 2.0) -> Dict[int, Dict[str, Any]]:
+        """Read the user-assigned Input Button names and their visibility.
+
+        Reads properties ``input_1`` .. ``input_8`` — "User name assigned to
+        Input Button N" (docs/Emotiva_Remote_Interface_Description.md lines
+        642-649). The device reports each with a ``visible`` attribute in the
+        Update response (lines 305-312, 427-439, e.g.
+        ``<property name="input_1" value="HDMI 1" visible="true" status="ack"/>``);
+        hidden buttons report ``visible="false"`` and can be filtered by callers.
+
+        Returns:
+            Mapping of button number to its attributes, e.g.
+            ``{1: {"name": "ZAPPITI", "visible": True}, ...}``. Buttons the
+            device does not report are omitted.
+        """
+        names = [Property[f"INPUT_{i}"].value for i in range(1, 9)]
+        _LOGGER.info("Requesting input button names: %s (timeout=%.1f)", names, timeout)
+        result = await self._protocol.request_properties_full(names, timeout=timeout)
+        out: Dict[int, Dict[str, Any]] = {}
+        for i in range(1, 9):
+            key = f"input_{i}"
+            if key in result:
+                out[i] = {"name": result[key]["value"], "visible": result[key]["visible"]}
+        return out
 
     # ---------- status snapshot --------------------------------------------
     async def status(self, *props: Property, timeout: float = 2.0) -> Dict[Property, str]:

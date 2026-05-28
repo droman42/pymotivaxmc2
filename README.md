@@ -92,6 +92,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Version History
 
+- 0.6.8: Added logical-source selection (`select_source`) and Input Button name/visibility reads (`get_input_names`); `ack_timeout` now configurable
 - 0.6.0: Added full enums and high-level helpers
 - 0.5.0: Improved notification handling
 - 0.4.0: Added command-line interface

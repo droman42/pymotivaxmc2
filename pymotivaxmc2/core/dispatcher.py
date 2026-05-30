@@ -31,6 +31,20 @@ class Dispatcher:
         self._listeners[prop].append(cb)
         _LOGGER.debug("Registered callback for property '%s'", prop)
 
+    def has_listeners(self, prop: str) -> bool:
+        """Return True if any callback is registered for ``prop``."""
+        return bool(self._listeners.get(prop))
+
+    async def dispatch(self, prop: str, value: str) -> None:
+        """Public entry point to dispatch a single property value to its listeners.
+
+        Shares the exact callback path used by the notification loop, so
+        subscribe-time initial values can be fanned out the same way ongoing
+        ``emotivaNotify`` packets are (see :meth:`Protocol.subscribe`). Per-callback
+        errors are contained by :meth:`_dispatch_property`.
+        """
+        await self._dispatch_property(prop, value)
+
     async def start(self):
         _LOGGER.info("Starting notification dispatcher")
         if self._task and not self._task.done():

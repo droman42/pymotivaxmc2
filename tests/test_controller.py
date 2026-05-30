@@ -289,18 +289,27 @@ class TestSubscriptionMethods:
 
     @pytest.mark.asyncio
     async def test_subscribe_single_property(self, connected_controller):
-        """Test subscribing to a single property."""
-        await connected_controller.subscribe(Property.POWER)
-        
-        connected_controller._socket_mgr.send.assert_called_once()
+        """Subscribing delegates to Protocol.subscribe and returns its dict."""
+        connected_controller._protocol.subscribe = AsyncMock(
+            return_value={"power": {"value": "On", "visible": True}}
+        )
+
+        result = await connected_controller.subscribe(Property.POWER)
+
+        connected_controller._protocol.subscribe.assert_called_once_with(["power"])
+        assert result == {"power": {"value": "On", "visible": True}}
 
     @pytest.mark.asyncio
     async def test_subscribe_multiple_properties(self, connected_controller):
-        """Test subscribing to multiple properties."""
+        """Subscribing forwards every property name to Protocol.subscribe."""
+        connected_controller._protocol.subscribe = AsyncMock(return_value={})
         properties = [Property.POWER, Property.VOLUME, Property.LOUDNESS]
+
         await connected_controller.subscribe(properties)
-        
-        connected_controller._socket_mgr.send.assert_called_once()
+
+        connected_controller._protocol.subscribe.assert_called_once_with(
+            [p.value for p in properties]
+        )
 
     @pytest.mark.asyncio
     async def test_unsubscribe_single_property(self, connected_controller):

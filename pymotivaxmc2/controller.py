@@ -8,7 +8,7 @@ from .core.discovery import Discovery
 from .core.socket_mgr import SocketManager
 from .core.protocol import Protocol
 from .core.dispatcher import Dispatcher
-from .core.xmlcodec import build_subscribe, build_unsubscribe
+from .core.xmlcodec import build_unsubscribe
 from .core.logging import get_logger, setup_logging
 from .enums import Command, Property, Input, Zone
 from .exceptions import EmotivaError, AckTimeoutError, InvalidArgumentError
@@ -95,6 +95,9 @@ class EmotivaController:
                 self._protocol = Protocol(self._socket_mgr, protocol_version=protocol_version,
                                           ack_timeout=self.ack_timeout)
                 self._dispatcher = Dispatcher(self._socket_mgr, "notifyPort")
+                # Let the protocol fan subscribe-time initial values out through
+                # the dispatcher's callback path (see Protocol.subscribe).
+                self._protocol.dispatcher = self._dispatcher
                 await self._dispatcher.start()
                 
                 # Phase 1 Fix: Set connected state only after successful initialization
@@ -148,17 +151,27 @@ class EmotivaController:
                 self._dispatcher = None
 
     # ---------- subscription helpers ---------------------------------------
-    async def subscribe(self, props: Property | Sequence[Property]):
-        """Subscribe to property changes from the device."""
+    async def subscribe(self, props: Property | Sequence[Property]) -> Dict[str, Any]:
+        """Subscribe to property changes from the device.
+
+        Delegates to :meth:`Protocol.subscribe`, which sends the request, waits
+        for the ``<emotivaSubscription>`` confirmation, and returns the device's
+        current value for each successfully-subscribed property as
+        ``{name: {"value": str, "visible": bool}}`` (the Subscribe response
+        carries current values per the Emotiva Remote Interface spec §2.1.3).
+
+        Any callbacks registered via :meth:`on` are additionally invoked with
+        each initial value through the same path as ongoing notifications, so
+        callback-based consumers reach a consistent state immediately after
+        subscribing without piping the return value through by hand.
+        """
         if isinstance(props, Property):
             props = [props]
         names = [p.value for p in props]
-        
+
         _LOGGER.info("Subscribing to properties: %s", names)
         try:
-            # Pass the protocol version to build_subscribe
-            await self._socket_mgr.send(build_subscribe(names, self._protocol.protocol_version), "controlPort")
-            _LOGGER.debug("Subscription request sent")
+            return await self._protocol.subscribe(names)
         except Exception as e:
             _LOGGER.error("Failed to subscribe to properties: %s", e)
             raise

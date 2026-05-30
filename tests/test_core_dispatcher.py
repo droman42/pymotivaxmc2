@@ -71,6 +71,41 @@ class TestCallbackRegistration:
         assert callback2 in dispatcher._listeners["power"]
 
 
+class TestPublicDispatchAPI:
+    """Test the public has_listeners / dispatch helpers used for fan-out."""
+
+    def test_has_listeners_false_when_unregistered(self):
+        dispatcher = Dispatcher(AsyncMock(), "notifyPort")
+        assert dispatcher.has_listeners("power") is False
+
+    def test_has_listeners_does_not_create_entry(self):
+        """Probing must not auto-create a defaultdict entry."""
+        dispatcher = Dispatcher(AsyncMock(), "notifyPort")
+        dispatcher.has_listeners("power")
+        assert "power" not in dispatcher._listeners
+
+    def test_has_listeners_true_after_register(self):
+        dispatcher = Dispatcher(AsyncMock(), "notifyPort")
+        dispatcher.on("power", lambda value: None)
+        assert dispatcher.has_listeners("power") is True
+
+    @pytest.mark.asyncio
+    async def test_dispatch_invokes_listener(self):
+        dispatcher = Dispatcher(AsyncMock(), "notifyPort")
+        received = []
+        dispatcher.on("power", lambda value: received.append(value))
+
+        await dispatcher.dispatch("power", "On")
+
+        assert received == ["On"]
+
+    @pytest.mark.asyncio
+    async def test_dispatch_no_listener_is_noop(self):
+        dispatcher = Dispatcher(AsyncMock(), "notifyPort")
+        # Should not raise.
+        await dispatcher.dispatch("power", "On")
+
+
 class TestPropertyExtraction:
     """Test property extraction from XML notifications."""
     

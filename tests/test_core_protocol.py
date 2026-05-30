@@ -410,6 +410,151 @@ class TestSubscribe:
         mock_socket_mgr.send.assert_called_once()
 
 
+class TestSubscribeInitialDispatch:
+    """Subscribe-time fan-out of initial values through registered callbacks."""
+
+    @pytest.fixture
+    def mock_socket_mgr(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def protocol_v3(self, mock_socket_mgr):
+        return Protocol(mock_socket_mgr, protocol_version="3.1")
+
+    @staticmethod
+    def _wire_dispatcher(protocol, mock_socket_mgr):
+        """Attach a real Dispatcher to the protocol (no run loop started)."""
+        from pymotivaxmc2.core.dispatcher import Dispatcher
+        dispatcher = Dispatcher(mock_socket_mgr, "notifyPort")
+        protocol.dispatcher = dispatcher
+        return dispatcher
+
+    @staticmethod
+    async def _drain(dispatcher):
+        """Await any async callback tasks the dispatcher scheduled."""
+        if dispatcher._active_tasks:
+            await asyncio.gather(*dispatcher._active_tasks, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_callback_registered_before_subscribe_gets_initial_value(
+        self, protocol_v3, mock_socket_mgr
+    ):
+        """An @on(prop) callback fires with the value from the subscribe response."""
+        dispatcher = self._wire_dispatcher(protocol_v3, mock_socket_mgr)
+
+        received = []
+        async def power_cb(value):
+            received.append(value)
+        dispatcher.on("power", power_cb)
+
+        sub_xml = b'''<?xml version="1.0"?>
+        <emotivaSubscription>
+            <property name="power" status="ack" value="On" visible="true"/>
+        </emotivaSubscription>'''
+        mock_socket_mgr.recv.return_value = (sub_xml, None)
+
+        result = await protocol_v3.subscribe(["power"])
+        await self._drain(dispatcher)
+
+        # Return value contract unchanged...
+        assert result == {"power": {"value": "On", "visible": True}}
+        # ...and the callback received the initial value.
+        assert received == ["On"]
+
+    @pytest.mark.asyncio
+    async def test_return_contract_holds_with_dispatcher(
+        self, protocol_v3, mock_socket_mgr
+    ):
+        """The dict return still contains every acked property with value+visible."""
+        self._wire_dispatcher(protocol_v3, mock_socket_mgr)
+
+        sub_xml = b'''<?xml version="1.0"?>
+        <emotivaSubscription>
+            <property name="power" status="ack" value="On" visible="true"/>
+            <property name="volume" status="ack" value="-20.5" visible="false"/>
+        </emotivaSubscription>'''
+        mock_socket_mgr.recv.return_value = (sub_xml, None)
+
+        result = await protocol_v3.subscribe(["power", "volume"])
+
+        assert result == {
+            "power": {"value": "On", "visible": True},
+            "volume": {"value": "-20.5", "visible": False},
+        }
+
+    @pytest.mark.asyncio
+    async def test_raising_callback_does_not_break_subscribe_or_other_callbacks(
+        self, protocol_v3, mock_socket_mgr
+    ):
+        """A callback that raises during initial dispatch is contained."""
+        dispatcher = self._wire_dispatcher(protocol_v3, mock_socket_mgr)
+
+        def bad_cb(value):
+            raise RuntimeError("boom")
+
+        good_received = []
+        def good_cb(value):
+            good_received.append(value)
+
+        dispatcher.on("power", bad_cb)
+        dispatcher.on("volume", good_cb)
+
+        sub_xml = b'''<?xml version="1.0"?>
+        <emotivaSubscription>
+            <property name="power" status="ack" value="On" visible="true"/>
+            <property name="volume" status="ack" value="-20.5" visible="true"/>
+        </emotivaSubscription>'''
+        mock_socket_mgr.recv.return_value = (sub_xml, None)
+
+        # Must not raise despite the bad callback.
+        result = await protocol_v3.subscribe(["power", "volume"])
+        await self._drain(dispatcher)
+
+        assert result == {
+            "power": {"value": "On", "visible": True},
+            "volume": {"value": "-20.5", "visible": True},
+        }
+        # The unrelated good callback still fired.
+        assert good_received == ["-20.5"]
+
+    @pytest.mark.asyncio
+    async def test_property_without_callback_goes_into_return_only(
+        self, protocol_v3, mock_socket_mgr
+    ):
+        """Subscribing to a property with no listener yields the dict, no error."""
+        dispatcher = self._wire_dispatcher(protocol_v3, mock_socket_mgr)
+        # A listener exists, but for a different property than the one subscribed.
+        seen = []
+        dispatcher.on("volume", lambda value: seen.append(value))
+
+        sub_xml = b'''<?xml version="1.0"?>
+        <emotivaSubscription>
+            <property name="power" status="ack" value="On" visible="true"/>
+        </emotivaSubscription>'''
+        mock_socket_mgr.recv.return_value = (sub_xml, None)
+
+        result = await protocol_v3.subscribe(["power"])
+        await self._drain(dispatcher)
+
+        assert result == {"power": {"value": "On", "visible": True}}
+        assert seen == []
+
+    @pytest.mark.asyncio
+    async def test_no_dispatcher_wired_is_a_noop(self, protocol_v3, mock_socket_mgr):
+        """Without a dispatcher the subscribe path is unchanged (backward compat)."""
+        assert protocol_v3.dispatcher is None
+
+        sub_xml = b'''<?xml version="1.0"?>
+        <emotivaSubscription>
+            <property name="power" status="ack" value="On" visible="true"/>
+        </emotivaSubscription>'''
+        mock_socket_mgr.recv.return_value = (sub_xml, None)
+
+        result = await protocol_v3.subscribe(["power"])
+
+        assert result == {"power": {"value": "On", "visible": True}}
+
+
 class TestProtocolIntegration:
     """Integration tests for Protocol class."""
 

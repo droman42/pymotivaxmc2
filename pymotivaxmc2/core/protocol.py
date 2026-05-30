@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from .logging import get_logger
 from .xmlcodec import build_command, build_update, build_subscribe, parse_xml
 from ..exceptions import AckTimeoutError
+
+if TYPE_CHECKING:
+    from .dispatcher import Dispatcher
 
 # Module logger
 _LOGGER = get_logger("protocol")
@@ -17,7 +20,12 @@ class Protocol:
         self.socket_mgr = socket_mgr
         self.protocol_version = protocol_version
         self.ack_timeout = ack_timeout
-        
+
+        # Optional dispatcher used to fan subscribe-time initial values out to
+        # registered listeners. Wired up by the controller after both are
+        # constructed; stays ``None`` when the protocol is used standalone.
+        self.dispatcher: "Dispatcher | None" = None
+
         # Phase 2 Fix: Add command concurrency control and retry configuration
         self._command_semaphore = asyncio.Semaphore(5)  # Limit concurrent commands
         self._max_retries = 3
@@ -253,8 +261,16 @@ class Protocol:
                             else:
                                 _LOGGER.warning("Failed to subscribe to '%s'", prop_elem.tag)
                                 
-                    _LOGGER.info("Successfully subscribed to %d/%d properties (attempt %d)", 
+                    _LOGGER.info("Successfully subscribed to %d/%d properties (attempt %d)",
                                len(results), len(properties), attempt + 1)
+
+                    # Fan the initial values the device just sent us out to any
+                    # registered listeners, so consumers that use the @on(prop)
+                    # callback pattern receive subscribe-time state through the
+                    # same path as ongoing notifications. The return value is
+                    # unaffected (backward-compatible for callback-less callers).
+                    await self._dispatch_initial_values(results)
+
                     return results
                     
                 except asyncio.TimeoutError as e:
@@ -273,9 +289,37 @@ class Protocol:
                                       attempt + 1, e)
                         await asyncio.sleep(self._base_backoff * (attempt + 1))
                     else:
-                        _LOGGER.error("Subscription failed after %d attempts: %s", 
+                        _LOGGER.error("Subscription failed after %d attempts: %s",
                                     self._max_retries, e)
                         raise
-            
+
             if last_exception:
                 raise last_exception
+
+    async def _dispatch_initial_values(self, results: Dict[str, Dict[str, Any]]) -> None:
+        """Push subscribe-time values through the dispatcher's callback path.
+
+        The Subscribe response already carries the current value of every
+        successfully-subscribed property (Emotiva Remote Interface spec
+        §2.1.3). Rather than make callback-based consumers re-read the return
+        value to seed their state, we replay each value through the same
+        dispatcher that handles ongoing ``emotivaNotify`` packets — a single
+        update path for subscribe-time and notification-time data.
+
+        No-op when no dispatcher is wired (standalone protocol use). Each
+        dispatch is guarded so a misbehaving consumer callback cannot break the
+        subscription; this mirrors the per-callback resilience already in
+        :meth:`Dispatcher._dispatch_property`.
+        """
+        dispatcher = self.dispatcher
+        if dispatcher is None:
+            return
+        for prop_name, info in results.items():
+            if not dispatcher.has_listeners(prop_name):
+                continue
+            try:
+                await dispatcher.dispatch(prop_name, info["value"])
+            except Exception as ex:
+                _LOGGER.exception(
+                    "Initial-value dispatch for '%s' raised: %s", prop_name, ex
+                )

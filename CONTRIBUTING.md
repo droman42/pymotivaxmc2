@@ -29,6 +29,11 @@ All three hard-fail the build:
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 
+# the check-no-type-checking CLI ships in py-dev-gates, which is intentionally
+# NOT a declared dependency (it is a private git repo, and PyPI rejects packages
+# with direct-URL deps in their metadata). Install it once, separately:
+.venv/bin/pip install "py-dev-gates @ git+https://github.com/droman42/py-dev-gates@v0.1.1"
+
 # the three gates
 .venv/bin/lint-imports                    # import-linter contracts
 .venv/bin/check-no-type-checking pymotivaxmc2
@@ -37,6 +42,10 @@ python -m venv .venv
 # the test suite (behaviour must stay green)
 .venv/bin/pytest -v
 ```
+
+In CI these gates run via the shared `droman42/py-dev-gates` composite action,
+which installs `py-dev-gates` itself — so it never needs to be a project
+dependency.
 
 ## This is a library: 0 errors is a contract, not a preference
 

@@ -22,12 +22,16 @@ dependencies = [
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
+# NOTE: no direct-URL (git+https) dependencies here. PyPI rejects any package
+# whose published metadata carries a direct reference, so the py-dev-gates gate
+# tool is NOT listed: CI installs it via the droman42/py-dev-gates composite
+# action (which self-installs it), and local contributors install it with the
+# one-off command in CONTRIBUTING.md.
 dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=0.26.0",
     "import-linter>=2.0",
     "pyright==1.1.410",
-    "py-dev-gates @ git+https://github.com/droman42/py-dev-gates@v0.1.1",
 ]
 
 [project.urls]

@@ -3,14 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict
 
 from .logging import get_logger
 from .xmlcodec import build_command, build_update, build_subscribe, parse_xml
+from .dispatcher import Dispatcher
 from ..exceptions import AckTimeoutError
-
-if TYPE_CHECKING:
-    from .dispatcher import Dispatcher
 
 # Module logger
 _LOGGER = get_logger("protocol")
@@ -24,7 +22,7 @@ class Protocol:
         # Optional dispatcher used to fan subscribe-time initial values out to
         # registered listeners. Wired up by the controller after both are
         # constructed; stays ``None`` when the protocol is used standalone.
-        self.dispatcher: "Dispatcher | None" = None
+        self.dispatcher: Dispatcher | None = None
 
         # Phase 2 Fix: Add command concurrency control and retry configuration
         self._command_semaphore = asyncio.Semaphore(5)  # Limit concurrent commands
@@ -43,7 +41,7 @@ class Protocol:
             data = build_command(name, self.protocol_version, **(params or {}))
             
             # Phase 2 Fix: Implement exponential backoff retry
-            last_exception = None
+            last_exception: Exception | None = None
             for attempt in range(self._max_retries):
                 try:
                     # Calculate timeout with backoff
@@ -92,7 +90,11 @@ class Protocol:
                         raise
             
             # All retries exhausted
-            raise last_exception
+            if last_exception is not None:
+                raise last_exception
+            raise AckTimeoutError(
+                f"Command '{name}' failed after {self._max_retries} attempts"
+            )
 
     async def request_properties(self, properties: list[str], timeout: float = 2.0) -> dict[str, str]:
         """Request properties and return a name -> value mapping.
@@ -211,8 +213,8 @@ class Protocol:
         # Phase 2 Fix: Apply concurrency limits and retry to subscriptions
         async with self._command_semaphore:
             _LOGGER.info("Subscribing to properties: %s", properties)
-            
-            last_exception = None
+
+            last_exception: Exception | None = None
             for attempt in range(self._max_retries):
                 try:
                     # Calculate adaptive timeout
@@ -295,6 +297,7 @@ class Protocol:
 
             if last_exception:
                 raise last_exception
+            return {}
 
     async def _dispatch_initial_values(self, results: Dict[str, Dict[str, Any]]) -> None:
         """Push subscribe-time values through the dispatcher's callback path.

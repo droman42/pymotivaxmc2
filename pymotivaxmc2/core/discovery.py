@@ -136,18 +136,19 @@ class Discovery:
                 elif child.tag == "control":
                     # Extract information from the control element according to spec
                     for ctrl_child in child:
+                        text = ctrl_child.text
                         if ctrl_child.tag == "version":
                             # This is the correct protocol version as per spec
-                            info["protocolVersion"] = ctrl_child.text
-                            _LOGGER.debug("Protocol version: %s", ctrl_child.text)
-                        elif ctrl_child.tag.endswith("Port"):
-                            info[ctrl_child.tag] = int(ctrl_child.text)
-                            _LOGGER.debug("Found port %s = %s", ctrl_child.tag, ctrl_child.text)
-                        elif ctrl_child.tag == "keepAlive":
-                            info["keepAlive"] = int(ctrl_child.text)
-                            _LOGGER.debug("Found keepAlive = %s ms", ctrl_child.text)
+                            info["protocolVersion"] = text
+                            _LOGGER.debug("Protocol version: %s", text)
+                        elif ctrl_child.tag.endswith("Port") and text is not None:
+                            info[ctrl_child.tag] = int(text)
+                            _LOGGER.debug("Found port %s = %s", ctrl_child.tag, text)
+                        elif ctrl_child.tag == "keepAlive" and text is not None:
+                            info["keepAlive"] = int(text)
+                            _LOGGER.debug("Found keepAlive = %s ms", text)
                         else:
-                            info[ctrl_child.tag] = ctrl_child.text
+                            info[ctrl_child.tag] = text
                 else:
                     info[child.tag] = child.text
                     

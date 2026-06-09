@@ -1,6 +1,6 @@
 [project]
 name = "pymotivaxmc2"
-version = "0.6.9"
+version = "0.7.0"
 description = "Async Python library for Emotiva XMC-2 and related devices"
 readme = "README.md"
 authors = [{name = "eMotiva Integration"}]
@@ -21,6 +21,15 @@ dependencies = [
 ]
 requires-python = ">=3.11"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
+    "import-linter>=2.0",
+    "pyright==1.1.410",
+    "py-dev-gates @ git+https://github.com/droman42/py-dev-gates@v0.1.1",
+]
+
 [project.urls]
 Homepage = "https://github.com/yourusername/pymotivaxmc2"
 Documentation = "https://pymotivaxmc2.readthedocs.io/"
@@ -39,6 +48,11 @@ where = ["."]
 include = ["pymotivaxmc2*"]
 exclude = ["tests*", "docs*", "*.tests*", "*.tests.*"]
 
+[tool.setuptools.package-data]
+# PEP 561: ship the py.typed marker so downstream type checkers honour the
+# inline annotations instead of treating the package as untyped.
+pymotivaxmc2 = ["py.typed"]
+
 [tool.black]
 line-length = 100
 target-version = ["py311"]
@@ -56,8 +70,49 @@ python_files = "test_*.py"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
-[dependency-groups]
-dev = [
-    "pytest>=8.3.5",
-    "pytest-asyncio>=0.26.0",
+# ---------------------------------------------------------------------------
+# import-linter contracts (CI-enforced via droman42/py-dev-gates `lint-imports`)
+# ---------------------------------------------------------------------------
+# The library is small but directional: a CLI drives a high-level controller
+# facade, which drives the protocol `core`, which rests on the leaf modules
+# `enums` and `exceptions`. Dependencies must point inward; these contracts
+# fail the build if that direction is ever reversed.
+[tool.importlinter]
+root_packages = ["pymotivaxmc2"]
+
+[[tool.importlinter.contracts]]
+name = "Protocol core does not import the high-level facade or CLI"
+type = "forbidden"
+source_modules = ["pymotivaxmc2.core"]
+forbidden_modules = [
+    "pymotivaxmc2.controller",
+    "pymotivaxmc2.cli",
+]
+
+[[tool.importlinter.contracts]]
+name = "Controller facade does not import the CLI"
+type = "forbidden"
+source_modules = ["pymotivaxmc2.controller"]
+forbidden_modules = ["pymotivaxmc2.cli"]
+
+[[tool.importlinter.contracts]]
+name = "Enums are a leaf (definitions, not behaviour)"
+type = "forbidden"
+source_modules = ["pymotivaxmc2.enums"]
+forbidden_modules = [
+    "pymotivaxmc2.cli",
+    "pymotivaxmc2.controller",
+    "pymotivaxmc2.core",
+    "pymotivaxmc2.exceptions",
+]
+
+[[tool.importlinter.contracts]]
+name = "Exceptions are a leaf"
+type = "forbidden"
+source_modules = ["pymotivaxmc2.exceptions"]
+forbidden_modules = [
+    "pymotivaxmc2.cli",
+    "pymotivaxmc2.controller",
+    "pymotivaxmc2.core",
+    "pymotivaxmc2.enums",
 ]

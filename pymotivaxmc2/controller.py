@@ -43,6 +43,29 @@ class EmotivaController:
         
         _LOGGER.info("Initialized controller for device at %s (timeout=%.1f)", host, timeout)
 
+    # ---------- connected-state accessors ----------------------------------
+    # The socket manager, protocol and dispatcher only exist between connect()
+    # and disconnect(). These accessors narrow the Optional away for the
+    # post-connect call sites and turn "used before connect()" from an opaque
+    # AttributeError on None into a clear EmotivaError.
+    @property
+    def _sock(self) -> SocketManager:
+        if self._socket_mgr is None:
+            raise EmotivaError("Controller is not connected; call connect() first")
+        return self._socket_mgr
+
+    @property
+    def _proto(self) -> Protocol:
+        if self._protocol is None:
+            raise EmotivaError("Controller is not connected; call connect() first")
+        return self._protocol
+
+    @property
+    def _disp(self) -> Dispatcher:
+        if self._dispatcher is None:
+            raise EmotivaError("Controller is not connected; call connect() first")
+        return self._dispatcher
+
     # ---------- connection -------------------------------------------------
     async def connect(self):
         """Discover device, bind sockets, start dispatcher."""
@@ -127,22 +150,22 @@ class EmotivaController:
             try:
                 _LOGGER.debug("Unsubscribing from all properties")
                 # Use the proper unsubscribe function with an empty property list
-                await self._socket_mgr.send(build_unsubscribe([]), "controlPort")
-                
+                await self._sock.send(build_unsubscribe([]), "controlPort")
+
                 _LOGGER.debug("Stopping dispatcher")
-                await self._dispatcher.stop()
-                
+                await self._disp.stop()
+
                 _LOGGER.debug("Stopping socket manager")
-                await self._socket_mgr.stop()
-                
+                await self._sock.stop()
+
                 _LOGGER.info("Successfully disconnected from device at %s", self.host)
             except Exception as e:
                 _LOGGER.error("Error during disconnect: %s", e)
                 # Still attempt to clean up
                 with contextlib.suppress(Exception):
-                    await self._dispatcher.stop()
+                    await self._disp.stop()
                 with contextlib.suppress(Exception):
-                    await self._socket_mgr.stop()
+                    await self._sock.stop()
             finally:
                 # Phase 1 Fix: Always reset state after disconnect attempt
                 self._connected = False
@@ -171,7 +194,7 @@ class EmotivaController:
 
         _LOGGER.info("Subscribing to properties: %s", names)
         try:
-            return await self._protocol.subscribe(names)
+            return await self._proto.subscribe(names)
         except Exception as e:
             _LOGGER.error("Failed to subscribe to properties: %s", e)
             raise
@@ -185,7 +208,7 @@ class EmotivaController:
         _LOGGER.info("Unsubscribing from properties: %s", names)
         try:
             # Use the proper unsubscribe function
-            await self._socket_mgr.send(build_unsubscribe(names), "controlPort")
+            await self._sock.send(build_unsubscribe(names), "controlPort")
             _LOGGER.debug("Unsubscription request sent")
         except Exception as e:
             _LOGGER.error("Failed to unsubscribe from properties: %s", e)
@@ -195,7 +218,7 @@ class EmotivaController:
         """Register a callback for property changes."""
         def decorator(cb: Callable[[Any], Awaitable[None]] | Callable[[Any], None]):
             _LOGGER.debug("Registering callback for property: %s", prop.value)
-            self._dispatcher.on(prop.value, cb)
+            self._disp.on(prop.value, cb)
             return cb
         return decorator
 
@@ -204,27 +227,27 @@ class EmotivaController:
         """Power on the specified zone."""
         _LOGGER.info("Powering on %s zone", zone.name)
         cmd = Command.ZONE2_POWER_ON if zone is Zone.ZONE2 else Command.POWER_ON
-        await self._protocol.send_command(cmd.value)
+        await self._proto.send_command(cmd.value)
 
     async def power_off(self, *, zone: Zone = Zone.MAIN):
         """Power off the specified zone."""
         _LOGGER.info("Powering off %s zone", zone.name)
         cmd = Command.ZONE2_POWER_OFF if zone is Zone.ZONE2 else Command.POWER_OFF
-        await self._protocol.send_command(cmd.value)
+        await self._proto.send_command(cmd.value)
 
     async def power_toggle(self, *, zone: Zone = Zone.MAIN):
         """Toggle power for the specified zone."""
         _LOGGER.info("Toggling power for %s zone", zone.name)
         cmd = Command.ZONE2_POWER if zone is Zone.ZONE2 else Command.STANDBY
-        await self._protocol.send_command(cmd.value)
+        await self._proto.send_command(cmd.value)
 
     async def set_volume(self, db: float, *, zone: Zone = Zone.MAIN):
         """Set volume to a specific level in dB."""
         _LOGGER.info("Setting %s zone volume to %.1f dB", zone.name, db)
         if zone is Zone.ZONE2:
-            await self._protocol.send_command(Command.ZONE2_SET_VOLUME.value, {"value": db})
+            await self._proto.send_command(Command.ZONE2_SET_VOLUME.value, {"value": db})
         else:
-            await self._protocol.send_command(Command.SET_VOLUME.value, {"value": db})
+            await self._proto.send_command(Command.SET_VOLUME.value, {"value": db})
 
     async def vol_up(self, step: float = 1.0, *, zone: Zone = Zone.MAIN):
         """Increase volume by the specified step."""
@@ -240,13 +263,29 @@ class EmotivaController:
         """Change volume by a relative amount."""
         _LOGGER.info("Changing %s zone volume by %.1f dB", zone.name, delta)
         cmd = Command.ZONE2_VOLUME if zone is Zone.ZONE2 else Command.VOLUME
-        await self._protocol.send_command(cmd.value, {"value": delta})
+        await self._proto.send_command(cmd.value, {"value": delta})
 
     async def mute(self, *, zone: Zone = Zone.MAIN):
+        """Toggle mute for the specified zone (alias of :meth:`mute_toggle`)."""
+        await self.mute_toggle(zone=zone)
+
+    async def mute_toggle(self, *, zone: Zone = Zone.MAIN):
         """Toggle mute for the specified zone."""
         _LOGGER.info("Toggling mute for %s zone", zone.name)
         cmd = Command.ZONE2_MUTE if zone is Zone.ZONE2 else Command.MUTE
-        await self._protocol.send_command(cmd.value)
+        await self._proto.send_command(cmd.value)
+
+    async def mute_on(self, *, zone: Zone = Zone.MAIN):
+        """Explicitly mute the specified zone."""
+        _LOGGER.info("Muting %s zone", zone.name)
+        cmd = Command.ZONE2_MUTE_ON if zone is Zone.ZONE2 else Command.MUTE_ON
+        await self._proto.send_command(cmd.value)
+
+    async def mute_off(self, *, zone: Zone = Zone.MAIN):
+        """Explicitly un-mute the specified zone."""
+        _LOGGER.info("Un-muting %s zone", zone.name)
+        cmd = Command.ZONE2_MUTE_OFF if zone is Zone.ZONE2 else Command.MUTE_OFF
+        await self._proto.send_command(cmd.value)
 
     async def select_input(self, input: Input | str):
         """Select an input source."""
@@ -262,7 +301,7 @@ class EmotivaController:
                 
         _LOGGER.info("Selecting input: %s", input_name)
         try:
-            await self._protocol.send_command(Command[f"{input_value.upper()}"].value)
+            await self._proto.send_command(Command[f"{input_value.upper()}"].value)
         except KeyError:
             _LOGGER.error("Command not found for input: %s", input_value)
             raise InvalidArgumentError(f"Command not found for input {input_value}")
@@ -305,7 +344,7 @@ class EmotivaController:
             )
 
         _LOGGER.info("Selecting source: %s (%s)", label, cmd.value)
-        await self._protocol.send_command(cmd.value)
+        await self._proto.send_command(cmd.value)
 
     async def get_input_names(self, *, timeout: float = 2.0) -> Dict[int, Dict[str, Any]]:
         """Read the user-assigned Input Button names and their visibility.
@@ -324,7 +363,7 @@ class EmotivaController:
         """
         names = [Property[f"INPUT_{i}"].value for i in range(1, 9)]
         _LOGGER.info("Requesting input button names: %s (timeout=%.1f)", names, timeout)
-        result = await self._protocol.request_properties_full(names, timeout=timeout)
+        result = await self._proto.request_properties_full(names, timeout=timeout)
         out: Dict[int, Dict[str, Any]] = {}
         for i in range(1, 9):
             key = f"input_{i}"
@@ -343,7 +382,7 @@ class EmotivaController:
         _LOGGER.info("Requesting status for properties: %s (timeout=%.1f)", names, timeout)
         
         try:
-            result = await self._protocol.request_properties(names, timeout=timeout)
+            result = await self._proto.request_properties(names, timeout=timeout)
             return {Property(name): val for name, val in result.items()}
         except Exception as e:
             _LOGGER.error("Error fetching status: %s", e)

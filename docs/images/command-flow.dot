@@ -1,0 +1,29 @@
+// pymotivaxmc2 — command/ack round-trip with retry. Render:
+//   dot -Tpng docs/images/command-flow.dot -o docs/images/command-flow.png
+// Mirrors Protocol.send_command: semaphore-gated, build XML, send, await ack, retry.
+digraph command {
+  rankdir=LR; bgcolor="white"; splines=spline; nodesep=0.4; ranksep=0.95;
+  fontname="Helvetica"; labelloc=t; fontsize=15;
+  label="A command: build XML, send on controlPort, wait for <emotivaAck>";
+
+  node [fontname="Helvetica", fontsize=11, shape=box, style="filled,rounded", penwidth=1.4];
+  edge [fontname="Helvetica", fontsize=9, color="#546e7a", fontcolor="#37474f", arrowsize=0.8];
+
+  call  [label="ctrl.power_on()\nctrl.set_volume(-25)", fillcolor="#e8f5e8", color="#388e3c"];
+  proto [label="Protocol.send_command\nsemaphore (max 5 in flight)\nbuild_command(...) XML", fillcolor="#fff3e0", color="#ef6c00"];
+  sock  [label="SocketManager\nsend on controlPort", fillcolor="#e3f2fd", color="#1976d2"];
+  dev   [label="Emotiva XMC-2", fillcolor="#f3e5f5", color="#7b1fa2", penwidth=2.0];
+  ack   [label="<emotivaAck>\non controlPort", fillcolor="#e3f2fd", color="#1976d2"];
+
+  call  -> proto;
+  proto -> sock  [label="XML bytes"];
+  sock  -> dev   [label="UDP"];
+  dev   -> ack   [color="#7b1fa2"];
+  ack   -> proto [label="return to caller"];
+
+  // retry path
+  retry [label="timeout? retry x3\nexponential backoff 0.5→8s\n+ jitter, else AckTimeoutError", shape=note,
+         fillcolor="#f5f5f5", color="#757575", fontsize=10];
+  proto -> retry [style=dotted, color="#c62828", fontcolor="#c62828", label="no ack in\nack_timeout (2s)"];
+  retry -> proto [style=dotted, color="#bdbdbd"];
+}

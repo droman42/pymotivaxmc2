@@ -1,100 +1,102 @@
 # pymotivaxmc2
 
-A slim asynchronous Python library for controlling Emotiva XMC‑2 (and compatible) devices over their UDP remote interface.
+An asynchronous Python library for controlling Emotiva XMC-2 (and compatible) processors over their UDP
+remote-control interface — discovery, commands, and real-time property notifications, all on `asyncio`.
 
-## Features
+Python 3.11+ · MIT · typed (`py.typed`)
 
-- Asynchronous API for non-blocking operation
-- Type-safe command and property access via enums
-- Automatic protocol version negotiation
-- Property change notifications
-- Command-line interface for quick testing
+## Highlights
 
-## Installation
+- **One controller, the whole device.** `EmotivaController` discovers the unit, negotiates the protocol
+  version, binds the UDP ports, and hands you typed helpers for power, volume, mute, inputs, and sources —
+  then tears it all down on `disconnect()`.
+- **Events, not polling.** Subscribe to volume, power, source, mode, and more; the device pushes each
+  change to an `async` callback. Subscribe-time values arrive through the same callback, so you reach a
+  consistent state the moment you subscribe.
+- **A typed command surface.** `Command`, `Property`, `Input`, and `Zone` enums replace magic strings, so
+  a wrong input or property is a name error at your editor, not a silent no-op on the wire.
+- **Speaks every protocol version.** Auto-negotiates protocol **2.0 / 3.0 / 3.1** from the device's own
+  transponder reply and parses both the old element-per-property and the new `<property>`-attribute frame
+  shapes.
+- **Resilient by default.** Commands are concurrency-limited and retried with exponential backoff; so are
+  discovery and subscription. Callbacks run with a timeout so one slow consumer can't stall the notify
+  loop.
+- **A CLI in the box.** `emu-cli` drives power, volume, mute, input, Zone 2, and status snapshots straight
+  from the shell — handy for testing without writing code.
+- **Typed end to end.** Ships `py.typed` (PEP 561), so consumers get real autocomplete and type-checking
+  against the public surface.
+
+## Install
 
 ```bash
 pip install pymotivaxmc2
 ```
 
-## Quick Start
+## Quick taste
 
 ```python
 import asyncio
-from pymotivaxmc2 import EmotivaController, Property, Command, Zone
+from pymotivaxmc2 import EmotivaController, Property
 
 async def main():
-    # Create controller for device at 192.168.1.50
-    ctrl = EmotivaController("192.168.1.50")
-    
-    # Connect to the device
-    await ctrl.connect()
-    
-    # Subscribe to volume changes
-    await ctrl.subscribe(Property.VOLUME)
-    
-    # Register callback for volume changes
-    @ctrl.on(Property.VOLUME)
-    async def vol_changed(value):
-        print(f"Volume is now {value} dB")
-    
-    # Set volume to -25 dB
-    await ctrl.set_volume(-25.0)
-    
-    # Power on the device
-    await ctrl.power_on()
-    
-    # Wait a minute
-    await asyncio.sleep(60)
-    
-    # Disconnect
-    await ctrl.disconnect()
+    ctrl = EmotivaController("192.168.1.50")     # your processor's IP
+    await ctrl.connect()                          # discover, negotiate, bind ports
+    try:
+        # React to volume changes the device pushes us
+        @ctrl.on(Property.VOLUME)
+        async def on_volume(value):
+            print("Volume is now", value, "dB")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+        await ctrl.subscribe(Property.VOLUME)     # initial value arrives on the callback too
+
+        await ctrl.power_on()
+        await ctrl.set_volume(-25.0)
+        await asyncio.sleep(30)                    # live notifications for 30s
+    finally:
+        await ctrl.disconnect()
+
+asyncio.run(main())
 ```
 
-## Command-Line Interface
+Register the callback **before** you subscribe — `subscribe()` replays the device's current value through
+your `@on` callback, so ordering it first means you never miss the initial state. The
+**[Quickstart](docs/guides/quickstart.md)** walks through the whole flow.
 
-The package includes a command-line interface for quick testing:
-
-```bash
-# Power control
-emu-cli --host 192.168.1.50 power on
-emu-cli --host 192.168.1.50 power toggle
-
-# Volume control
-emu-cli --host 192.168.1.50 volume up --step 2
-emu-cli --host 192.168.1.50 volume set -28.5
-
-# Zone 2 control
-emu-cli --host 192.168.1.50 zone2 power on
-emu-cli --host 192.168.1.50 zone2 volume down
-
-# Input selection
-emu-cli --host 192.168.1.50 input set hdmi3
-
-# Status query
-emu-cli --host 192.168.1.50 status power volume mute input
-```
+> **No pairing, no cloud.** The processor just has to be reachable on the LAN. `connect()` finds it with a
+> UDP ping and reads its capabilities from the reply — see **[Connection &
+> discovery](docs/guides/connection.md)**.
 
 ## Documentation
 
-For more detailed documentation, visit [pymotivaxmc2.readthedocs.io](https://pymotivaxmc2.readthedocs.io/).
+- **[Architecture overview](docs/architecture/overview.md)** — the layers, the one import rule, and the
+  connection lifecycle.
+- **[Quickstart](docs/guides/quickstart.md)** — install, connect, and send your first commands.
+- **[Commands](docs/guides/commands.md)** — the full helper surface on `EmotivaController`, plus the enums.
+- **[Subscriptions](docs/guides/subscriptions.md)** — real-time property events, their callbacks, and the
+  reconnect contract.
+- **[Connection & discovery](docs/guides/connection.md)** — how `connect()` finds the device, the UDP port
+  map, and protocol negotiation.
+- **[Command-line interface](docs/guides/cli.md)** — `emu-cli` for driving the device from the shell.
 
-## Requirements
+## Development
 
-- Python 3.11 or higher
-- typing-extensions 3.7.4 or higher
+```bash
+git clone https://github.com/droman42/pymotivaxmc2.git
+cd pymotivaxmc2
+pip install -e ".[dev]"
+pytest
+```
+
+Three CI-enforced health gates (import layering, no `TYPE_CHECKING` guards, and `pyright` at zero errors)
+guard every commit — see **[Contributing](CONTRIBUTING.md)** for how to run them locally and why a typed
+library treats those as contracts.
+
+## Acknowledgements
+
+- The **Emotiva Remote Interface Description** (vendored under
+  [`docs/Emotiva_Remote_Interface_Description.md`](docs/Emotiva_Remote_Interface_Description.md)) — the
+  protocol specification this library implements.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Version History
-
-- 0.6.8: Added logical-source selection (`select_source`) and Input Button name/visibility reads (`get_input_names`); `ack_timeout` now configurable
-- 0.6.0: Added full enums and high-level helpers
-- 0.5.0: Improved notification handling
-- 0.4.0: Added command-line interface
-- 0.3.0: Added property subscription
-- 0.2.0: Initial public release
+MIT — see [LICENSE](LICENSE).

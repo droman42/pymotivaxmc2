@@ -1,0 +1,28 @@
+// pymotivaxmc2 — the connection lifecycle of an EmotivaController session. Render:
+//   dot -Tpng docs/images/connection-lifecycle.dot -o docs/images/connection-lifecycle.png
+digraph lifecycle {
+  rankdir=LR; bgcolor="white"; splines=spline; nodesep=0.35; ranksep=0.85;
+  fontname="Helvetica"; labelloc=t; fontsize=15;
+  label="An EmotivaController session: connect, control, disconnect";
+
+  node [fontname="Helvetica", fontsize=11, shape=box, style="filled,rounded", penwidth=1.4,
+        fillcolor="#e8f5e8", color="#388e3c"];
+  edge [fontname="Helvetica", fontsize=9, color="#546e7a", fontcolor="#37474f", arrowsize=0.75];
+
+  connect  [label="connect()"];
+  discover [label="discover\nping → transponder\n(model, ports, protocol)", fillcolor="#e3f2fd", color="#1976d2"];
+  bind     [label="bind UDP ports\nstart dispatcher", fillcolor="#fff3e0", color="#ef6c00"];
+  ready    [label="ready\nctrl.power_on()\nctrl.subscribe(...)"];
+  use      [label="commands + live\nnotifications"];
+  close    [label="disconnect()\nunsubscribe all, close sockets", fillcolor="#f3e5f5", color="#7b1fa2"];
+
+  connect  -> discover;
+  discover -> bind   [label="negotiate protocol\n2.0 / 3.0 / 3.1"];
+  bind     -> ready  [label="_connected = True"];
+  ready    -> use;
+  use      -> close   [label="when done"];
+
+  // reconnect note
+  close -> connect [style=dotted, color="#bdbdbd", constraint=false,
+                    label="reconnect: connect() again\n(idempotent; re-subscribe after)"];
+}

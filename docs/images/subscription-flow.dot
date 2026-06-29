@@ -1,0 +1,27 @@
+// pymotivaxmc2 — how a notification reaches your callback. Render:
+//   dot -Tpng docs/images/subscription-flow.dot -o docs/images/subscription-flow.png
+// Mirrors Dispatcher._run / _extract_properties / _dispatch_property.
+digraph subscription {
+  rankdir=LR; bgcolor="white"; splines=spline; nodesep=0.4; ranksep=1.0;
+  fontname="Helvetica"; labelloc=t; fontsize=15;
+  label="A notification: <emotivaNotify> frame in, callback(value) out";
+
+  node [fontname="Helvetica", fontsize=11, shape=box, style="filled,rounded", penwidth=1.4];
+  edge [fontname="Helvetica", fontsize=9, color="#546e7a", fontcolor="#37474f", arrowsize=0.8];
+
+  dev   [label="Emotiva XMC-2\nemits <emotivaNotify>", fillcolor="#f3e5f5", color="#7b1fa2"];
+  sock  [label="SocketManager\nrecv on notifyPort", fillcolor="#e3f2fd", color="#1976d2"];
+  loop  [label="Dispatcher._run\nparse + _extract_properties\n(v2.0 tags or v3.0+ elements)", fillcolor="#fff3e0", color="#ef6c00"];
+  fan   [label="_dispatch_property\nlook up listeners for name", fillcolor="#fff3e0", color="#ef6c00"];
+  cb    [label="your callback\n@on(Property.X)\nasync def cb(value)", fillcolor="#e8f5e8", color="#388e3c"];
+
+  dev  -> sock [label="XML over UDP"];
+  sock -> loop [label="raw bytes"];
+  loop -> fan  [label="name → value\n(per property)"];
+  fan  -> cb   [label="value (str)\nasync: 5s timeout\nsync: thread pool"];
+
+  // subscribe path (setup) — also seeds initial values
+  setup [label="ctrl.subscribe(Property.X)\nawait <emotivaSubscription>\ninitial values fanned to callbacks", shape=note,
+         fillcolor="#f5f5f5", color="#757575", fontsize=10];
+  setup -> loop [style=dotted, color="#bdbdbd", label="one subscribe frame\non controlPort"];
+}

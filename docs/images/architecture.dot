@@ -1,0 +1,76 @@
+// pymotivaxmc2 — layered architecture. Render:
+//   dot -Tpng docs/images/architecture.dot -o docs/images/architecture.png
+// Shared palette (reused across all pymotivaxmc2 diagrams):
+//   facade   green  fill #e8f5e8 / line #388e3c   (high-level EmotivaController)
+//   behavior amber  fill #fff3e0 / line #ef6c00   (protocol, dispatcher)
+//   transport blue  fill #e3f2fd / line #1976d2   (socket_mgr, discovery)
+//   leaf     grey   fill #f5f5f5 / line #757575   (enums, exceptions, xmlcodec)
+//   device   purple fill #f3e5f5 / line #7b1fa2   (the Emotiva device, external)
+digraph architecture {
+  rankdir=TB;
+  bgcolor="white";
+  splines=spline;
+  nodesep=0.4; ranksep=0.8;
+  fontname="Helvetica"; labelloc=t; fontsize=16;
+  label="pymotivaxmc2 — layered: every import points down, never up";
+
+  node [fontname="Helvetica", fontsize=11, shape=box, style="filled,rounded", penwidth=1.4];
+  edge [fontname="Helvetica", fontsize=9, color="#9e9e9e", arrowsize=0.7];
+
+  // --- CLI entry ---
+  cli [label="emu-cli  (cli.py)\ncommand-line front end", fillcolor="#e8f5e8", color="#388e3c"];
+
+  // --- facade layer ---
+  subgraph cluster_facade {
+    label="Facade — recommended public API"; fontsize=12; color="#a5d6a7"; style=rounded; margin=12;
+    controller [label="EmotivaController\nconnect · subscribe · power/volume/mute\ninput/source · status", fillcolor="#e8f5e8", color="#388e3c", width=4.2];
+  }
+
+  // --- behaviour layer ---
+  subgraph cluster_behavior {
+    label="Behaviour — protocol core"; fontsize=12; color="#ffcc80"; style=rounded; margin=12;
+    protocol   [label="Protocol\ncommand → ack, update,\nsubscribe (retry + backoff)", fillcolor="#fff3e0", color="#ef6c00"];
+    dispatcher [label="Dispatcher\nnotify loop → your callbacks", fillcolor="#fff3e0", color="#ef6c00"];
+  }
+
+  // --- transport layer ---
+  subgraph cluster_transport {
+    label="Transport"; fontsize=12; color="#90caf9"; style=rounded; margin=12;
+    sockets   [label="SocketManager\nowns the UDP ports", fillcolor="#e3f2fd", color="#1976d2"];
+    discovery [label="Discovery\nping → transponder", fillcolor="#e3f2fd", color="#1976d2"];
+  }
+
+  // --- leaves ---
+  subgraph cluster_leaf {
+    label="Leaves — no internal imports"; fontsize=12; color="#cfcfcf"; style=rounded; margin=12;
+    enums   [label="enums\nCommand · Property\nInput · Zone", fillcolor="#f5f5f5", color="#757575"];
+    excs    [label="exceptions\nEmotivaError · AckTimeoutError\nInvalidArgumentError", fillcolor="#f5f5f5", color="#757575"];
+    codec   [label="xmlcodec\nbuild/parse XML", fillcolor="#f5f5f5", color="#757575"];
+  }
+
+  // --- the device ---
+  device [label="Emotiva XMC-2\nUDP 7000/7001 · control · notify", shape=box, style="filled,rounded",
+          fillcolor="#f3e5f5", color="#7b1fa2", penwidth=2.0, width=4.2];
+
+  // imports point down
+  cli        -> controller;
+  controller -> protocol;
+  controller -> dispatcher;
+  controller -> discovery;
+  protocol   -> sockets;
+  dispatcher -> sockets;
+  discovery  -> sockets [style=invis];
+  protocol   -> codec  [color="#bdbdbd", style=dotted];
+  dispatcher -> codec  [color="#bdbdbd", style=dotted];
+  controller -> enums  [color="#bdbdbd", style=dotted];
+  protocol   -> excs   [color="#bdbdbd", style=dotted];
+
+  // the wire
+  sockets   -> device [dir=both, style=dashed, color="#7b1fa2", fontcolor="#7b1fa2",
+                       label="XML over UDP"];
+  discovery -> device [dir=both, style=dashed, color="#7b1fa2"];
+
+  { rank=same; protocol; dispatcher; }
+  { rank=same; sockets; discovery; }
+  { rank=same; enums; excs; codec; }
+}

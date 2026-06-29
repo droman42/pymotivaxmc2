@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.7.0] - 2026-06-09
+
+### Added
+- `py.typed` marker (PEP 561) — downstream type checkers now honour the inline
+  annotations instead of treating the package as untyped.
+- User-facing documentation set under `docs/` (architecture overview + guides for
+  quickstart, commands, subscriptions, connection/discovery, and the CLI), with
+  Graphviz diagrams in `docs/images/`.
+
+### Changed
+- Adopted the shared `droman42/py-dev-gates` health gates (import-linter layering
+  contracts, a no-`TYPE_CHECKING` gate, and `pyright` pinned at zero errors),
+  enforced in CI. See `CONTRIBUTING.md`.
+
 ## [0.6.9] - 2026-05-30
 
 ### Added

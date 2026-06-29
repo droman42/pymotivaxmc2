@@ -1,0 +1,24 @@
+// pymotivaxmc2 — discovery: the ping/transponder handshake. Render:
+//   dot -Tpng docs/images/discovery.dot -o docs/images/discovery.png
+digraph discovery {
+  rankdir=LR; bgcolor="white"; splines=spline; nodesep=0.4; ranksep=1.0;
+  fontname="Helvetica"; labelloc=t; fontsize=15;
+  label="Discovery: ping out on 7000, transponder back on 7001";
+
+  node [fontname="Helvetica", fontsize=11, shape=box, style="filled,rounded", penwidth=1.4];
+  edge [fontname="Helvetica", fontsize=9, color="#546e7a", fontcolor="#37474f", arrowsize=0.8];
+
+  disc [label="Discovery.fetch_transponder()\nbind local UDP 7001\n(retry x3, backoff)", fillcolor="#e3f2fd", color="#1976d2"];
+  dev  [label="Emotiva XMC-2\nlistens on UDP 7000", fillcolor="#f3e5f5", color="#7b1fa2", penwidth=2.0];
+
+  info [label="<emotivaTransponder>\nmodel · revision · name\ncontrolPort · notifyPort\ncontrol/version (protocol)\nkeepAlive", shape=note, fillcolor="#f5f5f5", color="#757575", fontsize=10];
+
+  disc -> dev  [label="<emotivaPing protocol=\"3.1\"/>\nto host:7000"];
+  dev  -> disc [label="self-identification\nto host:7001", color="#7b1fa2", fontcolor="#7b1fa2"];
+  disc -> info [style=dotted, color="#bdbdbd", label="parsed into"];
+
+  // what the controller does with it
+  use [label="EmotivaController.connect()\npicks min(protocol_max, device version)\nbinds controlPort / notifyPort", shape=note,
+       fillcolor="#e8f5e8", color="#388e3c", fontsize=10];
+  info -> use [style=dotted, color="#bdbdbd"];
+}

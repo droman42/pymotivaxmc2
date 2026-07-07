@@ -11,8 +11,9 @@ break. These are always-on; they are not optional per task.
 
 - **`work-on-main`** — Work directly on `main`. Branch only when the maintainer explicitly asks; if you
   branch transiently, fast-forward merge back into `main` and delete the branch (local + remote).
-  **Releases ship by pushing a lightweight `vX.Y.Z` git tag**: `release.yml` validates that the tag equals
-  `version` in `pyproject.toml`, then builds and publishes to PyPI. Keep `pyproject.toml` `version` and
+  **Releases ship by pushing a lightweight `vX.Y.Z` git tag**: the release jobs in `ci.yml` (the single CI
+  workflow) validate that the tag equals `version` in `pyproject.toml` and run only after the health gates
+  and test matrix pass on that commit, then build and publish to PyPI. Keep `pyproject.toml` `version` and
   `pymotivaxmc2/__init__.py` `__version__` in sync, and add the matching entry to **`CHANGELOG.md`** in the
   same change; `setup.py` is a stale shim that defers to `pyproject.toml` and is otherwise ignored.
 

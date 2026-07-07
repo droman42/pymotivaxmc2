@@ -45,7 +45,10 @@ python -m venv .venv
 
 In CI these gates run via the shared `droman42/py-dev-gates` composite action,
 which installs `py-dev-gates` itself — so it never needs to be a project
-dependency.
+dependency. They live in the `health` job of the single CI workflow
+(`.github/workflows/ci.yml`), which also runs the 3.11/3.12 test matrix in
+parallel and — on a `vX.Y.Z` tag only, after both pass — the release jobs
+(version validation, build, PyPI publish, GitHub release).
 
 ## This is a library: 0 errors is a contract, not a preference
 

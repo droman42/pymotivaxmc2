@@ -35,10 +35,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/droman42/pymotivaxmc2"
-Documentation = "https://github.com/droman42/pymotivaxmc2/tree/main/docs"
-Repository = "https://github.com/droman42/pymotivaxmc2.git"
-Issues = "https://github.com/droman42/pymotivaxmc2/issues"
+Homepage = "https://github.com/locveil/pymotivaxmc2"
+Documentation = "https://github.com/locveil/pymotivaxmc2/tree/main/docs"
+Repository = "https://github.com/locveil/pymotivaxmc2.git"
+Issues = "https://github.com/locveil/pymotivaxmc2/issues"
 
 [project.scripts]
 emu-cli = "pymotivaxmc2.cli:main"

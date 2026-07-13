@@ -81,7 +81,7 @@ your `@on` callback, so ordering it first means you never miss the initial state
 ## Development
 
 ```bash
-git clone https://github.com/droman42/pymotivaxmc2.git
+git clone https://github.com/locveil/pymotivaxmc2.git
 cd pymotivaxmc2
 pip install -e ".[dev]"
 pytest

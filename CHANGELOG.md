@@ -4,7 +4,24 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Per-call retry control**: every controller command helper, `status()`, and
+  the protocol transactions accept `retries=` — the number of RE-sends after
+  the first attempt (`retries=0` = exactly one packet, for readiness-sensitive
+  callers that must not multiply traffic at a device mid-transition).
+- **`ack=False` fire-and-forget commands**: builds the command with `ack="no"`
+  (the spec makes the ack optional), sends once, awaits nothing, returns
+  `None` — the always-awaited ack was the retry-ladder entry point exactly
+  when the device is busy.
+- **Command pacing**: `EmotivaController(..., min_send_interval=0.1)` enforces
+  a minimum gap between all control-port sends (the device has limited
+  processing power); `max_retries=` is now constructor-configurable too.
+
 ### Changed
+- **Batch status reads retry only the missing properties** — a partial Update
+  response re-requests just the absent names, never the whole batch, and
+  results accumulate across attempts. An empty property request no longer
+  sends an empty Update packet.
 - **Control-port transactions are now serialized** — exactly one command /
   subscribe / status transaction in flight at a time (was `Semaphore(5)`).
   Emotiva processors have limited processing power (concurrent control traffic

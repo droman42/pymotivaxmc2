@@ -109,7 +109,9 @@ class TestConnect:
             mock_protocol_cls.assert_called_once_with(
                 mock_socket_mgr,
                 protocol_version="3.1",
-                ack_timeout=2.0
+                ack_timeout=2.0,
+                max_retries=3,
+                min_send_interval=0.0
             )
             
             # Verify dispatcher setup
@@ -158,7 +160,9 @@ class TestConnect:
             mock_protocol_cls.assert_called_once_with(
                 mock_socket_mgr,
                 protocol_version="3.1",  # Controller's max
-                ack_timeout=2.0
+                ack_timeout=2.0,
+                max_retries=3,
+                min_send_interval=0.0
             )
 
     @pytest.mark.asyncio
@@ -365,7 +369,7 @@ class TestPowerMethods:
         await connected_controller.power_on()
         
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.POWER_ON.value
+            Command.POWER_ON.value, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -374,7 +378,7 @@ class TestPowerMethods:
         await connected_controller.power_on(zone=Zone.ZONE2)
         
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.ZONE2_POWER_ON.value
+            Command.ZONE2_POWER_ON.value, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -383,7 +387,7 @@ class TestPowerMethods:
         await connected_controller.power_off()
         
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.POWER_OFF.value
+            Command.POWER_OFF.value, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -392,7 +396,7 @@ class TestPowerMethods:
         await connected_controller.power_off(zone=Zone.ZONE2)
         
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.ZONE2_POWER_OFF.value
+            Command.ZONE2_POWER_OFF.value, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -401,7 +405,7 @@ class TestPowerMethods:
         await connected_controller.power_toggle()
         
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.STANDBY.value
+            Command.STANDBY.value, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -410,7 +414,7 @@ class TestPowerMethods:
         await connected_controller.power_toggle(zone=Zone.ZONE2)
         
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.ZONE2_POWER.value
+            Command.ZONE2_POWER.value, retries=None, ack=True
         )
 
 
@@ -431,7 +435,7 @@ class TestVolumeMethods:
         
         connected_controller._protocol.send_command.assert_called_once_with(
             Command.SET_VOLUME.value,
-            {"value": -20.5}
+            {"value": -20.5}, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -441,7 +445,7 @@ class TestVolumeMethods:
         
         connected_controller._protocol.send_command.assert_called_once_with(
             Command.ZONE2_SET_VOLUME.value,
-            {"value": -15.0}
+            {"value": -15.0}, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -451,7 +455,7 @@ class TestVolumeMethods:
         
         connected_controller._protocol.send_command.assert_called_once_with(
             Command.VOLUME.value,
-            {"value": 1.0}
+            {"value": 1.0}, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -461,7 +465,7 @@ class TestVolumeMethods:
         
         connected_controller._protocol.send_command.assert_called_once_with(
             Command.VOLUME.value,
-            {"value": 2.5}
+            {"value": 2.5}, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -471,7 +475,7 @@ class TestVolumeMethods:
         
         connected_controller._protocol.send_command.assert_called_once_with(
             Command.VOLUME.value,
-            {"value": -1.0}
+            {"value": -1.0}, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -481,7 +485,7 @@ class TestVolumeMethods:
         
         connected_controller._protocol.send_command.assert_called_once_with(
             Command.VOLUME.value,
-            {"value": -3.0}
+            {"value": -3.0}, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -491,7 +495,7 @@ class TestVolumeMethods:
         
         connected_controller._protocol.send_command.assert_called_once_with(
             Command.VOLUME.value,
-            {"value": 2.0}
+            {"value": 2.0}, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -501,7 +505,7 @@ class TestVolumeMethods:
         
         connected_controller._protocol.send_command.assert_called_once_with(
             Command.VOLUME.value,
-            {"value": -1.5}
+            {"value": -1.5}, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -511,7 +515,7 @@ class TestVolumeMethods:
         
         connected_controller._protocol.send_command.assert_called_once_with(
             Command.ZONE2_VOLUME.value,
-            {"value": 1.0}
+            {"value": 1.0}, retries=None, ack=True
         )
 
 
@@ -531,7 +535,7 @@ class TestMuteMethods:
         await connected_controller.mute()
         
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.MUTE.value
+            Command.MUTE.value, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -540,7 +544,7 @@ class TestMuteMethods:
         await connected_controller.mute(zone=Zone.ZONE2)
         
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.ZONE2_MUTE.value
+            Command.ZONE2_MUTE.value, retries=None, ack=True
         )
 
 
@@ -560,7 +564,7 @@ class TestOtherMethods:
         await connected_controller.select_input(Input.HDMI1)
         
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.HDMI1.value
+            Command.HDMI1.value, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -569,7 +573,7 @@ class TestOtherMethods:
         await connected_controller.select_input("hdmi2")
         
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.HDMI2.value
+            Command.HDMI2.value, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -578,7 +582,7 @@ class TestOtherMethods:
         await connected_controller.select_source(3)
 
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.SOURCE_3.value
+            Command.SOURCE_3.value, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -587,7 +591,7 @@ class TestOtherMethods:
         await connected_controller.select_source("tuner")
 
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.SOURCE_TUNER.value
+            Command.SOURCE_TUNER.value, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -597,8 +601,8 @@ class TestOtherMethods:
         await connected_controller.select_source(8)
 
         connected_controller._protocol.send_command.assert_has_calls([
-            call(Command.SOURCE_1.value),
-            call(Command.SOURCE_8.value),
+            call(Command.SOURCE_1.value, retries=None, ack=True),
+            call(Command.SOURCE_8.value, retries=None, ack=True),
         ])
 
     @pytest.mark.asyncio
@@ -616,7 +620,7 @@ class TestOtherMethods:
         await connected_controller.select_input(Input.HDMI1)
 
         connected_controller._protocol.send_command.assert_called_once_with(
-            Command.HDMI1.value
+            Command.HDMI1.value, retries=None, ack=True
         )
 
     @pytest.mark.asyncio
@@ -635,6 +639,7 @@ class TestOtherMethods:
             ["input_1", "input_2", "input_3", "input_4",
              "input_5", "input_6", "input_7", "input_8"],
             timeout=1.0,
+            retries=None,
         )
         assert result == {
             1: {"name": "ZAPPITI", "visible": True},
@@ -656,7 +661,7 @@ class TestOtherMethods:
         connected_controller._protocol.request_properties.assert_called_once_with(
             ["power", "volume"],
             timeout=1.0
-        )
+        , retries=None)
         
         # Verify result transformation
         expected = {
@@ -1391,3 +1396,41 @@ class TestPhase2ErrorHandlingImprovements:
         error = DiscoveryError("Network error during discovery (attempt 1): Connection refused")
         assert "Network error" in str(error)
         assert "attempt 1" in str(error) 
+
+class TestPerCallRetryAndAckThreading:
+    """LIB-2 (bridge ledger): the facade threads retries/ack to the protocol."""
+
+    @pytest.fixture
+    def connected_controller(self):
+        controller = EmotivaController("192.168.1.100")
+        controller._protocol = AsyncMock()
+        return controller
+
+    @pytest.mark.asyncio
+    async def test_power_on_threads_retries_and_ack(self, connected_controller):
+        """A readiness-sensitive caller can send exactly one unacknowledged packet."""
+        await connected_controller.power_on(retries=0, ack=False)
+
+        connected_controller._protocol.send_command.assert_called_once_with(
+            Command.POWER_ON.value, retries=0, ack=False
+        )
+
+    @pytest.mark.asyncio
+    async def test_status_threads_retries(self, connected_controller):
+        connected_controller._protocol.request_properties.return_value = {"power": "On"}
+
+        await connected_controller.status(Property.POWER, timeout=0.5, retries=0)
+
+        connected_controller._protocol.request_properties.assert_called_once_with(
+            ["power"], timeout=0.5, retries=0
+        )
+
+    def test_constructor_knobs(self):
+        """max_retries and min_send_interval are constructor-configurable."""
+        c = EmotivaController("192.168.1.100", max_retries=1, min_send_interval=0.25)
+        assert c.max_retries == 1
+        assert c.min_send_interval == 0.25
+        # Defaults preserved
+        d = EmotivaController("192.168.1.100")
+        assert d.max_retries == 3
+        assert d.min_send_interval == 0.0

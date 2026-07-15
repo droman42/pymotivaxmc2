@@ -31,6 +31,32 @@ await ctrl.set_volume(-30.0, zone=Zone.ZONE2)
 > **Tuning the ack wait.** Construct the controller with `EmotivaController(host, ack_timeout=1.0)` to
 > shorten or lengthen the per-attempt wait. Discovery has its own `timeout` (default 5 s).
 
+### Retries, `ack="no"`, and pacing
+
+Every command helper (and `status()`) accepts per-call knobs, and the controller takes two
+constructor-level ones:
+
+```python
+ctrl = EmotivaController(host,
+                         max_retries=3,          # default total attempts per transaction
+                         min_send_interval=0.1)  # >= 100 ms between control-port sends
+
+await ctrl.power_on(retries=0)            # exactly ONE send — no re-sends on a slow ack
+await ctrl.set_volume(-30.0, ack=False)   # fire-and-forget: ack="no", nothing awaited
+status = await ctrl.status(Property.POWER, retries=0)
+```
+
+- **`retries=`** counts *re-sends after the first attempt* — `retries=0` is exactly one packet.
+  Use it when the device may be mid-transition (power-on, HDMI/ARC handshake): a retry into a busy
+  device is more load at the worst moment. `None` (default) uses the constructor's `max_retries`.
+- **`ack=False`** builds the command with `ack="no"` (the protocol makes the ack optional), sends
+  once, awaits nothing, and returns `None`. There is no delivery confirmation — pair it with a
+  subscribed notification if you need to observe the effect.
+- **`min_send_interval`** enforces a minimum gap between *all* control-port sends. Emotiva
+  processors have limited processing power; one knob paces every transaction.
+- **Status reads retry only what's missing.** A partial Update response re-requests just the
+  absent properties, never the whole batch.
+
 ---
 
 ## Power — `tv.power_*`

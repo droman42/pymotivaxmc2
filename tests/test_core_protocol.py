@@ -230,12 +230,13 @@ class TestRequestProperties:
 
     @pytest.mark.asyncio
     async def test_request_properties_empty_list(self, protocol_v2, mock_socket_mgr):
-        """Test property request with empty property list."""
+        """An empty property request sends NOTHING — an empty Update packet is
+        pure device load for zero information (the device has limited
+        processing power; every needless packet counts)."""
         result = await protocol_v2.request_properties([], timeout=1.0)
-        
+
         assert result == {}
-        # Should still send the request
-        mock_socket_mgr.send.assert_called_once()
+        mock_socket_mgr.send.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_request_properties_unexpected_tag(self, protocol_v2, mock_socket_mgr):
@@ -689,3 +690,106 @@ class TestControlPortSerialization:
         assert result["power"]["value"] == "On"
         mock_socket_mgr.drain.assert_called_with("controlPort")
         assert protocol._control_lock.locked() is False  # released after the transaction
+
+
+class TestRetryDampingAndPacing:
+    """LIB-2 (bridge ledger): per-call retries, ack='no', pacing, missing-only batch retry."""
+
+    @pytest.fixture
+    def mock_socket_mgr(self):
+        mock = AsyncMock()
+        mock.drain = MagicMock(return_value=0)  # drain() is sync on the real SocketManager
+        return mock
+
+    @pytest.fixture
+    def protocol(self, mock_socket_mgr):
+        return Protocol(mock_socket_mgr, protocol_version="3.1", ack_timeout=0.05)
+
+    @pytest.mark.asyncio
+    async def test_retries_zero_sends_exactly_once(self, protocol, mock_socket_mgr):
+        """retries=0 = one attempt: a readiness-sensitive caller must never
+        multiply packets at a busy device."""
+        mock_socket_mgr.recv.side_effect = asyncio.TimeoutError()
+
+        with pytest.raises(AckTimeoutError):
+            await protocol.send_command("power_on", retries=0)
+
+        mock_socket_mgr.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_retries_negative_rejected(self, protocol):
+        with pytest.raises(ValueError):
+            await protocol.send_command("power_on", retries=-1)
+
+    @pytest.mark.asyncio
+    async def test_ack_no_is_fire_and_forget(self, protocol, mock_socket_mgr):
+        """ack=False builds ack='no' (spec: the ack is optional), sends once,
+        awaits nothing, returns None."""
+        result = await protocol.send_command("power_on", ack=False)
+
+        assert result is None
+        mock_socket_mgr.send.assert_called_once()
+        sent = mock_socket_mgr.send.call_args[0][0]
+        assert b'ack="no"' in sent
+        mock_socket_mgr.recv.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ack_yes_is_explicit_in_frame(self, protocol, mock_socket_mgr):
+        ack_xml = b'<?xml version="1.0"?><emotivaAck/>'
+        mock_socket_mgr.recv.return_value = (ack_xml, None)
+
+        await protocol.send_command("power_on")
+
+        sent = mock_socket_mgr.send.call_args[0][0]
+        assert b'ack="yes"' in sent
+
+    @pytest.mark.asyncio
+    async def test_min_send_interval_paces_sends(self, mock_socket_mgr):
+        """Two back-to-back commands are separated by at least the pacing interval."""
+        protocol = Protocol(mock_socket_mgr, ack_timeout=0.5, min_send_interval=0.08)
+        ack_xml = b'<?xml version="1.0"?><emotivaAck/>'
+        send_times: list[float] = []
+
+        async def fake_send(data, port):
+            send_times.append(asyncio.get_event_loop().time())
+
+        mock_socket_mgr.send.side_effect = fake_send
+        mock_socket_mgr.recv.return_value = (ack_xml, None)
+
+        await protocol.send_command("power_on")
+        await protocol.send_command("power_off")
+
+        assert len(send_times) == 2
+        assert send_times[1] - send_times[0] >= 0.08
+
+    @pytest.mark.asyncio
+    async def test_batch_retry_requests_only_missing(self, mock_socket_mgr):
+        """A partial Update response retries ONLY the missing properties —
+        never the whole batch."""
+        protocol = Protocol(mock_socket_mgr, protocol_version="3.1", ack_timeout=0.5)
+        partial = (
+            b'<?xml version="1.0"?><emotivaUpdate protocol="3.1">'
+            b'<property name="power" value="On" visible="true" status="ack"/>'
+            b'</emotivaUpdate>'
+        )
+        complete = (
+            b'<?xml version="1.0"?><emotivaUpdate protocol="3.1">'
+            b'<property name="volume" value="-40.0" visible="true" status="ack"/>'
+            b'</emotivaUpdate>'
+        )
+        # attempt 1: partial answer then silence; attempt 2: the missing one
+        mock_socket_mgr.recv.side_effect = [
+            (partial, None), asyncio.TimeoutError(),
+            (complete, None),
+        ]
+
+        result = await protocol.request_properties_full(
+            ["power", "volume"], timeout=0.1, retries=1
+        )
+
+        assert result["power"]["value"] == "On"
+        assert result["volume"]["value"] == "-40.0"
+        assert mock_socket_mgr.send.call_count == 2
+        second_update = mock_socket_mgr.send.call_args_list[1][0][0]
+        assert b"volume" in second_update
+        assert b"power" not in second_update  # missing-only re-request

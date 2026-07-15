@@ -25,13 +25,23 @@ class EmotivaController:
         protocol_max: Maximum protocol version to use.
         ack_timeout: Seconds to wait for an ``<emotivaAck>`` before retrying a
             command (passed through to the underlying Protocol).
+        max_retries: Default total attempts per control transaction (legacy
+            meaning: ``3`` = one send + two re-sends). Per-call ``retries=``
+            overrides count RE-sends (``retries=0`` = exactly one send).
+        min_send_interval: Minimum seconds between control-port sends
+            (0 = unpaced). Emotiva processors have limited processing power;
+            pace all control traffic with one knob when driving fragile
+            firmware.
     """
     def __init__(self, host: str, *, timeout: float = 5.0, protocol_max: str = "3.1",
-                 ack_timeout: float = 2.0):
+                 ack_timeout: float = 2.0, max_retries: int = 3,
+                 min_send_interval: float = 0.0):
         self.host = host
         self.timeout = timeout
         self.protocol_max = protocol_max
         self.ack_timeout = ack_timeout
+        self.max_retries = max_retries
+        self.min_send_interval = min_send_interval
         self._info: Dict[str, Any] | None = None
         self._socket_mgr: SocketManager | None = None
         self._protocol: Protocol | None = None
@@ -116,7 +126,9 @@ class EmotivaController:
             try:
                 # Initialize Protocol with the determined protocol version
                 self._protocol = Protocol(self._socket_mgr, protocol_version=protocol_version,
-                                          ack_timeout=self.ack_timeout)
+                                          ack_timeout=self.ack_timeout,
+                                          max_retries=self.max_retries,
+                                          min_send_interval=self.min_send_interval)
                 self._dispatcher = Dispatcher(self._socket_mgr, "notifyPort")
                 # Let the protocol fan subscribe-time initial values out through
                 # the dispatcher's callback path (see Protocol.subscribe).
@@ -223,71 +235,85 @@ class EmotivaController:
         return decorator
 
     # ---------- convenience methods ----------------------------------------
-    async def power_on(self, *, zone: Zone = Zone.MAIN):
+    async def power_on(self, *, zone: Zone = Zone.MAIN,
+                       retries: int | None = None, ack: bool = True):
         """Power on the specified zone."""
         _LOGGER.info("Powering on %s zone", zone.name)
         cmd = Command.ZONE2_POWER_ON if zone is Zone.ZONE2 else Command.POWER_ON
-        await self._proto.send_command(cmd.value)
+        await self._proto.send_command(cmd.value, retries=retries, ack=ack)
 
-    async def power_off(self, *, zone: Zone = Zone.MAIN):
+    async def power_off(self, *, zone: Zone = Zone.MAIN,
+                        retries: int | None = None, ack: bool = True):
         """Power off the specified zone."""
         _LOGGER.info("Powering off %s zone", zone.name)
         cmd = Command.ZONE2_POWER_OFF if zone is Zone.ZONE2 else Command.POWER_OFF
-        await self._proto.send_command(cmd.value)
+        await self._proto.send_command(cmd.value, retries=retries, ack=ack)
 
-    async def power_toggle(self, *, zone: Zone = Zone.MAIN):
+    async def power_toggle(self, *, zone: Zone = Zone.MAIN,
+                           retries: int | None = None, ack: bool = True):
         """Toggle power for the specified zone."""
         _LOGGER.info("Toggling power for %s zone", zone.name)
         cmd = Command.ZONE2_POWER if zone is Zone.ZONE2 else Command.STANDBY
-        await self._proto.send_command(cmd.value)
+        await self._proto.send_command(cmd.value, retries=retries, ack=ack)
 
-    async def set_volume(self, db: float, *, zone: Zone = Zone.MAIN):
+    async def set_volume(self, db: float, *, zone: Zone = Zone.MAIN,
+                         retries: int | None = None, ack: bool = True):
         """Set volume to a specific level in dB."""
         _LOGGER.info("Setting %s zone volume to %.1f dB", zone.name, db)
         if zone is Zone.ZONE2:
-            await self._proto.send_command(Command.ZONE2_SET_VOLUME.value, {"value": db})
+            await self._proto.send_command(Command.ZONE2_SET_VOLUME.value, {"value": db},
+                                           retries=retries, ack=ack)
         else:
-            await self._proto.send_command(Command.SET_VOLUME.value, {"value": db})
+            await self._proto.send_command(Command.SET_VOLUME.value, {"value": db},
+                                           retries=retries, ack=ack)
 
-    async def vol_up(self, step: float = 1.0, *, zone: Zone = Zone.MAIN):
+    async def vol_up(self, step: float = 1.0, *, zone: Zone = Zone.MAIN,
+                     retries: int | None = None, ack: bool = True):
         """Increase volume by the specified step."""
         _LOGGER.info("Volume up by %.1f dB for %s zone", step, zone.name)
-        await self.set_volume_relative(step, zone=zone)
+        await self.set_volume_relative(step, zone=zone, retries=retries, ack=ack)
 
-    async def vol_down(self, step: float = 1.0, *, zone: Zone = Zone.MAIN):
+    async def vol_down(self, step: float = 1.0, *, zone: Zone = Zone.MAIN,
+                       retries: int | None = None, ack: bool = True):
         """Decrease volume by the specified step."""
         _LOGGER.info("Volume down by %.1f dB for %s zone", step, zone.name)
-        await self.set_volume_relative(-step, zone=zone)
+        await self.set_volume_relative(-step, zone=zone, retries=retries, ack=ack)
 
-    async def set_volume_relative(self, delta: float, *, zone: Zone = Zone.MAIN):
+    async def set_volume_relative(self, delta: float, *, zone: Zone = Zone.MAIN,
+                                  retries: int | None = None, ack: bool = True):
         """Change volume by a relative amount."""
         _LOGGER.info("Changing %s zone volume by %.1f dB", zone.name, delta)
         cmd = Command.ZONE2_VOLUME if zone is Zone.ZONE2 else Command.VOLUME
-        await self._proto.send_command(cmd.value, {"value": delta})
+        await self._proto.send_command(cmd.value, {"value": delta}, retries=retries, ack=ack)
 
-    async def mute(self, *, zone: Zone = Zone.MAIN):
+    async def mute(self, *, zone: Zone = Zone.MAIN,
+                   retries: int | None = None, ack: bool = True):
         """Toggle mute for the specified zone (alias of :meth:`mute_toggle`)."""
-        await self.mute_toggle(zone=zone)
+        await self.mute_toggle(zone=zone, retries=retries, ack=ack)
 
-    async def mute_toggle(self, *, zone: Zone = Zone.MAIN):
+    async def mute_toggle(self, *, zone: Zone = Zone.MAIN,
+                          retries: int | None = None, ack: bool = True):
         """Toggle mute for the specified zone."""
         _LOGGER.info("Toggling mute for %s zone", zone.name)
         cmd = Command.ZONE2_MUTE if zone is Zone.ZONE2 else Command.MUTE
-        await self._proto.send_command(cmd.value)
+        await self._proto.send_command(cmd.value, retries=retries, ack=ack)
 
-    async def mute_on(self, *, zone: Zone = Zone.MAIN):
+    async def mute_on(self, *, zone: Zone = Zone.MAIN,
+                      retries: int | None = None, ack: bool = True):
         """Explicitly mute the specified zone."""
         _LOGGER.info("Muting %s zone", zone.name)
         cmd = Command.ZONE2_MUTE_ON if zone is Zone.ZONE2 else Command.MUTE_ON
-        await self._proto.send_command(cmd.value)
+        await self._proto.send_command(cmd.value, retries=retries, ack=ack)
 
-    async def mute_off(self, *, zone: Zone = Zone.MAIN):
+    async def mute_off(self, *, zone: Zone = Zone.MAIN,
+                       retries: int | None = None, ack: bool = True):
         """Explicitly un-mute the specified zone."""
         _LOGGER.info("Un-muting %s zone", zone.name)
         cmd = Command.ZONE2_MUTE_OFF if zone is Zone.ZONE2 else Command.MUTE_OFF
-        await self._proto.send_command(cmd.value)
+        await self._proto.send_command(cmd.value, retries=retries, ack=ack)
 
-    async def select_input(self, input: Input | str):
+    async def select_input(self, input: Input | str, *,
+                           retries: int | None = None, ack: bool = True):
         """Select an input source."""
         if isinstance(input, Input):
             input_value = input.value
@@ -301,12 +327,14 @@ class EmotivaController:
                 
         _LOGGER.info("Selecting input: %s", input_name)
         try:
-            await self._proto.send_command(Command[f"{input_value.upper()}"].value)
+            await self._proto.send_command(Command[f"{input_value.upper()}"].value,
+                                           retries=retries, ack=ack)
         except KeyError:
             _LOGGER.error("Command not found for input: %s", input_value)
             raise InvalidArgumentError(f"Command not found for input {input_value}")
 
-    async def select_source(self, source: int | str):
+    async def select_source(self, source: int | str, *,
+                            retries: int | None = None, ack: bool = True):
         """Select a logical source ("Input N" button), loading its A/V profile.
 
         Unlike :meth:`select_input` (which selects a raw physical connector such
@@ -344,9 +372,10 @@ class EmotivaController:
             )
 
         _LOGGER.info("Selecting source: %s (%s)", label, cmd.value)
-        await self._proto.send_command(cmd.value)
+        await self._proto.send_command(cmd.value, retries=retries, ack=ack)
 
-    async def get_input_names(self, *, timeout: float = 2.0) -> Dict[int, Dict[str, Any]]:
+    async def get_input_names(self, *, timeout: float = 2.0,
+                              retries: int | None = None) -> Dict[int, Dict[str, Any]]:
         """Read the user-assigned Input Button names and their visibility.
 
         Reads properties ``input_1`` .. ``input_8`` — "User name assigned to
@@ -363,7 +392,7 @@ class EmotivaController:
         """
         names = [Property[f"INPUT_{i}"].value for i in range(1, 9)]
         _LOGGER.info("Requesting input button names: %s (timeout=%.1f)", names, timeout)
-        result = await self._proto.request_properties_full(names, timeout=timeout)
+        result = await self._proto.request_properties_full(names, timeout=timeout, retries=retries)
         out: Dict[int, Dict[str, Any]] = {}
         for i in range(1, 9):
             key = f"input_{i}"
@@ -372,7 +401,8 @@ class EmotivaController:
         return out
 
     # ---------- status snapshot --------------------------------------------
-    async def status(self, *props: Property, timeout: float = 2.0) -> Dict[Property, str]:
+    async def status(self, *props: Property, timeout: float = 2.0,
+                     retries: int | None = None) -> Dict[Property, str]:
         """Get current status of specified properties."""
         if not props:
             _LOGGER.error("No properties requested in status call")
@@ -382,7 +412,7 @@ class EmotivaController:
         _LOGGER.info("Requesting status for properties: %s (timeout=%.1f)", names, timeout)
         
         try:
-            result = await self._proto.request_properties(names, timeout=timeout)
+            result = await self._proto.request_properties(names, timeout=timeout, retries=retries)
             return {Property(name): val for name, val in result.items()}
         except Exception as e:
             _LOGGER.error("Error fetching status: %s", e)

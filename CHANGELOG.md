@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [0.8.0] - 2026-07-15
 
 ### Added
 - **`EmotivaController.keepalive_interval_ms`** — the device-advertised

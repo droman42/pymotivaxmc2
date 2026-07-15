@@ -50,6 +50,11 @@ class EmotivaController:
         # Phase 1 Fix: Add connection state protection
         self._connection_lock = asyncio.Lock()
         self._connected = False
+
+        # Names subscribed in this session — the spec has no "unsubscribe all"
+        # (each property must be unsubscribed explicitly, §2.1.5), so
+        # disconnect() needs the real list to actually clear device-side state.
+        self._subscribed: set[str] = set()
         
         _LOGGER.info("Initialized controller for device at %s (timeout=%.1f)", host, timeout)
 
@@ -160,9 +165,16 @@ class EmotivaController:
             _LOGGER.info("Disconnecting from device at %s", self.host)
             
             try:
-                _LOGGER.debug("Unsubscribing from all properties")
-                # Use the proper unsubscribe function with an empty property list
-                await self._sock.send(build_unsubscribe([]), "controlPort")
+                # The spec has no "unsubscribe all" — each property must be named
+                # explicitly (§2.1.5); an empty <emotivaUnsubscribe> clears NOTHING
+                # on the device. Send the real subscribed set.
+                if self._subscribed:
+                    names = sorted(self._subscribed)
+                    _LOGGER.debug("Unsubscribing from %d properties: %s", len(names), names)
+                    await self._sock.send(build_unsubscribe(names), "controlPort")
+                    self._subscribed.clear()
+                else:
+                    _LOGGER.debug("No active subscriptions to clear")
 
                 _LOGGER.debug("Stopping dispatcher")
                 await self._disp.stop()
@@ -185,6 +197,40 @@ class EmotivaController:
                 self._protocol = None
                 self._dispatcher = None
 
+    # ---------- device info accessors ---------------------------------------
+    @property
+    def keepalive_interval_ms(self) -> int | None:
+        """Device-advertised keepAlive interval in milliseconds.
+
+        Parsed from the ``<emotivaTransponder>`` packet at :meth:`connect`
+        (spec: the interval at which the device emits its ``keepAlive``
+        notification). ``None`` before ``connect()`` or when the device did
+        not advertise one — consumers building a liveness watchdog should
+        fall back to their own default in that case.
+        """
+        if self._info is None:
+            return None
+        ka = self._info.get("keepAlive")
+        return int(ka) if ka is not None else None
+
+    @property
+    def notification_sequence(self) -> int | None:
+        """Sequence number of the last ``emotivaNotify`` received (spec §2.6);
+        ``None`` before connect() or before the first notification."""
+        if self._dispatcher is None:
+            return None
+        return self._dispatcher.last_sequence
+
+    @property
+    def notification_gaps(self) -> int:
+        """Total notifications MISSED so far, detected via sequence-number
+        jumps. A non-zero delta since the last check means state built from
+        notifications may be stale — refresh what you care about instead of
+        blind-polling everything."""
+        if self._dispatcher is None:
+            return 0
+        return self._dispatcher.gap_count
+
     # ---------- subscription helpers ---------------------------------------
     async def subscribe(self, props: Property | Sequence[Property]) -> Dict[str, Any]:
         """Subscribe to property changes from the device.
@@ -206,7 +252,9 @@ class EmotivaController:
 
         _LOGGER.info("Subscribing to properties: %s", names)
         try:
-            return await self._proto.subscribe(names)
+            result = await self._proto.subscribe(names)
+            self._subscribed.update(names)
+            return result
         except Exception as e:
             _LOGGER.error("Failed to subscribe to properties: %s", e)
             raise
@@ -221,6 +269,7 @@ class EmotivaController:
         try:
             # Use the proper unsubscribe function
             await self._sock.send(build_unsubscribe(names), "controlPort")
+            self._subscribed.difference_update(names)
             _LOGGER.debug("Unsubscription request sent")
         except Exception as e:
             _LOGGER.error("Failed to unsubscribe from properties: %s", e)

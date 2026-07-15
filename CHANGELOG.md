@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **`EmotivaController.keepalive_interval_ms`** — the device-advertised
+  keepAlive interval from the transponder, previously parsed and dropped;
+  consumers no longer need to read private state or hard-code the interval.
+- **Notification sequence surfacing** — `notification_sequence` /
+  `notification_gaps` on the controller (dispatcher tracks the `emotivaNotify`
+  sequence attribute, spec §2.6): a gap means notifications were MISSED and
+  state may be stale; refresh selectively instead of blind-polling.
 - **Per-call retry control**: every controller command helper, `status()`, and
   the protocol transactions accept `retries=` — the number of RE-sends after
   the first attempt (`retries=0` = exactly one packet, for readiness-sensitive
@@ -16,6 +23,15 @@ All notable changes to this project are documented in this file.
 - **Command pacing**: `EmotivaController(..., min_send_interval=0.1)` enforces
   a minimum gap between all control-port sends (the device has limited
   processing power); `max_retries=` is now constructor-configurable too.
+
+### Fixed
+- **`disconnect()` now actually unsubscribes** — the controller tracks the
+  session's subscribed properties and names them explicitly (the protocol has
+  no "unsubscribe all"; the previous empty `<emotivaUnsubscribe>` cleared
+  nothing on the device). No frame is sent when nothing was subscribed.
+- **Sockets bind with `SO_REUSEADDR`** — the fixed control/notify ports
+  (7002/7003) no longer risk "address already in use" on a rapid
+  disconnect→connect cycle (watchdog recovery).
 
 ### Changed
 - **Batch status reads retry only the missing properties** — a partial Update

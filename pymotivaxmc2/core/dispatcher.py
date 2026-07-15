@@ -24,6 +24,13 @@ class Dispatcher:
         # Phase 1 Fix: Add callback timeout protection and task management
         self._active_tasks: set[asyncio.Task] = set()
         self._callback_timeout = 5.0  # 5 second timeout for callbacks
+
+        # Notification sequence tracking (spec: emotivaNotify carries an
+        # incrementing sequence attribute since protocol 2.0). A jump reveals
+        # MISSED notifications — the honest alternative to a blind full
+        # refresh when a consumer needs to know whether its state is stale.
+        self.last_sequence: int | None = None
+        self.gap_count: int = 0
         
         _LOGGER.debug("Dispatcher initialized for port %s", notify_port_name)
 
@@ -146,10 +153,24 @@ class Dispatcher:
                 xml = parse_xml(data)
                 
                 if xml.tag == "emotivaNotify":
-                    # Extract sequence number for logging (optional)
+                    # Sequence tracking: detect missed notifications (spec §2.6).
                     sequence = xml.get("sequence")
                     if sequence:
                         _LOGGER.debug("Processing notification sequence %s", sequence)
+                        try:
+                            seq = int(sequence)
+                        except ValueError:
+                            seq = None
+                        if seq is not None:
+                            last = self.last_sequence
+                            if last is not None and seq > last + 1:
+                                missed = seq - last - 1
+                                self.gap_count += missed
+                                _LOGGER.warning(
+                                    "Notification sequence gap: %d -> %d (%d missed, %d total)",
+                                    last, seq, missed, self.gap_count)
+                            if last is None or seq > last:
+                                self.last_sequence = seq
                     
                     # Extract all properties from the notification using dual-format logic
                     properties = self._extract_properties(xml)

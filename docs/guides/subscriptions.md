@@ -70,8 +70,10 @@ and a misbehaving callback can't break the subscription.
 
 ## Reconnecting
 
-Subscriptions live for the duration of a connection. `disconnect()` sends an unsubscribe-all to the device,
-stops the dispatcher, and closes the sockets — so **after a reconnect you must re-subscribe.** Your
+Subscriptions live for the duration of a connection. `disconnect()` explicitly unsubscribes every property
+you subscribed in the session (the protocol has no "unsubscribe all" — each property must be named, so the
+controller tracks your subscriptions and names them), stops the dispatcher, and closes the sockets — so
+**after a reconnect you must re-subscribe.** Your
 registered `@on` callbacks are attached to the dispatcher, which is rebuilt on `connect()`, so re-register
 them too if you tore the controller down:
 
@@ -88,6 +90,20 @@ await ctrl.subscribe(Property.VOLUME) # re-subscribe; current value replays agai
 
 > `connect()` itself is idempotent — calling it while already connected is a no-op, so a supervisor can
 > call it freely. It's the *disconnect* that clears subscription state.
+
+## Detecting missed notifications
+
+Every `emotivaNotify` carries an incrementing **sequence number**. The dispatcher tracks it and the
+controller surfaces it:
+
+```python
+ctrl.notification_sequence   # last sequence seen (None before the first notification)
+ctrl.notification_gaps       # total notifications MISSED so far (sequence jumps)
+```
+
+A non-zero delta in `notification_gaps` since you last checked means state built from notifications may be
+stale — refresh the specific properties you care about (a targeted `status(...)`) instead of blind-polling
+everything. Reordered or duplicate frames do not count as gaps.
 
 ## What you can subscribe to
 

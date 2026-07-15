@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket as _socket
 from collections import defaultdict
 from typing import Callable, Dict, Tuple, Awaitable
 
@@ -61,9 +62,21 @@ class SocketManager:
                 _LOGGER.debug("Binding to port %d for %s", port, name)
                 queue: asyncio.Queue = asyncio.Queue()
                 try:
+                    # Bind through an explicit socket so SO_REUSEADDR can be set:
+                    # the protocol's ports are FIXED (7002/7003), and a rapid
+                    # disconnect->connect cycle (watchdog recovery) must not die
+                    # on "address already in use" while the old socket lingers.
+                    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+                    try:
+                        sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+                        sock.setblocking(False)
+                        sock.bind(("0.0.0.0", port))
+                    except OSError:
+                        sock.close()
+                        raise
                     transport, _ = await self._loop.create_datagram_endpoint(
                         lambda: _DatagramProto(queue),
-                        local_addr=("0.0.0.0", port),
+                        sock=sock,
                     )
                     self._queues[port] = queue
                     self._transports[port] = transport

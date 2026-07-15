@@ -257,9 +257,12 @@ class TestDisconnect:
         dispatcher_mock = connected_controller._dispatcher
         
         await connected_controller.disconnect()
-        
-        # Verify cleanup calls on the captured mocks
-        socket_mgr_mock.send.assert_called_once()
+
+        # Verify cleanup calls on the captured mocks. Nothing was subscribed in
+        # this session, so NO unsubscribe frame is sent (an empty
+        # <emotivaUnsubscribe> is a no-op per spec §2.1.5 — sending it was
+        # pure device load).
+        socket_mgr_mock.send.assert_not_called()
         dispatcher_mock.stop.assert_called_once()
         socket_mgr_mock.stop.assert_called_once()
         
@@ -712,8 +715,9 @@ class TestControllerIntegration:
             # Test disconnection
             await controller.disconnect()
             
-            # Verify cleanup calls
-            mock_socket_mgr.send.assert_called_once()  # unsubscribe
+            # Verify cleanup calls: no unsubscribe frame — nothing was
+            # subscribed in this session (empty unsubscribe is a spec no-op)
+            mock_socket_mgr.send.assert_not_called()
             mock_dispatcher.stop.assert_called_once()
             mock_socket_mgr.stop.assert_called_once()
 
@@ -1434,3 +1438,85 @@ class TestPerCallRetryAndAckThreading:
         d = EmotivaController("192.168.1.100")
         assert d.max_retries == 3
         assert d.min_send_interval == 0.0
+
+
+class TestLib3ApiHygiene:
+    """LIB-3 (bridge ledger): keepAlive accessor, real unsubscribe, sequence surfacing."""
+
+    def test_keepalive_interval_ms_before_connect(self):
+        assert EmotivaController("192.168.1.100").keepalive_interval_ms is None
+
+    def test_keepalive_interval_ms_from_transponder(self):
+        c = EmotivaController("192.168.1.100")
+        c._info = {"keepAlive": 7500}
+        assert c.keepalive_interval_ms == 7500
+        c._info = {}
+        assert c.keepalive_interval_ms is None
+
+    def test_notification_accessors_before_connect(self):
+        c = EmotivaController("192.168.1.100")
+        assert c.notification_sequence is None
+        assert c.notification_gaps == 0
+
+    def test_notification_accessors_delegate_to_dispatcher(self):
+        c = EmotivaController("192.168.1.100")
+        disp = MagicMock()
+        disp.last_sequence = 6862
+        disp.gap_count = 3
+        c._dispatcher = disp
+        assert c.notification_sequence == 6862
+        assert c.notification_gaps == 3
+
+    @pytest.mark.asyncio
+    async def test_subscribe_tracks_names(self):
+        c = EmotivaController("192.168.1.100")
+        c._protocol = AsyncMock()
+        c._protocol.subscribe.return_value = {"power": {"value": "On", "visible": True}}
+
+        await c.subscribe([Property.POWER, Property.VOLUME])
+
+        assert c._subscribed == {"power", "volume"}
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_untracks_names(self):
+        c = EmotivaController("192.168.1.100")
+        c._protocol = AsyncMock()
+        c._socket_mgr = AsyncMock()
+        c._subscribed = {"power", "volume"}
+
+        await c.unsubscribe(Property.POWER)
+
+        assert c._subscribed == {"volume"}
+
+    @pytest.mark.asyncio
+    async def test_disconnect_sends_real_unsubscribe_list(self):
+        """The spec has no 'unsubscribe all' — an empty <emotivaUnsubscribe> is
+        a no-op. disconnect() must name every subscribed property."""
+        c = EmotivaController("192.168.1.100")
+        c._protocol = MagicMock()
+        sock = AsyncMock()
+        c._socket_mgr = sock
+        c._dispatcher = AsyncMock()
+        c._connected = True
+        c._subscribed = {"power", "volume"}
+
+        await c.disconnect()
+
+        sent = sock.send.call_args_list[0][0][0]
+        assert b"<power" in sent and b"<volume" in sent
+        assert c._subscribed == set()
+
+    @pytest.mark.asyncio
+    async def test_disconnect_skips_unsubscribe_when_nothing_subscribed(self):
+        c = EmotivaController("192.168.1.100")
+        c._protocol = MagicMock()
+        sock = AsyncMock()
+        c._socket_mgr = sock
+        c._dispatcher = AsyncMock()
+        c._connected = True
+
+        await c.disconnect()
+
+        # No unsubscribe frame at all — nothing was subscribed
+        for call_args in sock.send.call_args_list:
+            assert b"emotivaUnsubscribe" not in call_args[0][0]

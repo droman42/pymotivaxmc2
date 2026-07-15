@@ -24,6 +24,12 @@ library needs:
 Discovery is resilient: it makes **up to three attempts** with exponential backoff before raising
 `DiscoveryError`, so a single dropped UDP packet doesn't fail the connection.
 
+> **Reading the keep-alive interval.** After `connect()`, `ctrl.keepalive_interval_ms` returns the
+> device-advertised interval in milliseconds (`None` if the device didn't advertise one) — the correct
+> basis for a consumer-side liveness watchdog, instead of a hard-coded guess. The control/notify sockets
+> are bound with `SO_REUSEADDR`, so a rapid disconnect→connect cycle (e.g. watchdog recovery) doesn't die
+> on "address already in use" while the previous socket lingers.
+
 ## Protocol negotiation
 
 Emotiva firmware speaks one of protocol **2.0**, **3.0**, or **3.1**, and the two wire dialects differ (see

@@ -584,3 +584,50 @@ class TestRealWorldExamples:
         # - Different numbers of properties per notification
         # - Different property values lengths
         assert len(properties) == 5  # Multiple properties in one notification 
+
+class TestSequenceTracking:
+    """LIB-3 (bridge ledger): notification sequence numbers surfaced (spec §2.6)."""
+
+    @pytest.fixture
+    def mock_socket_mgr(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def dispatcher(self, mock_socket_mgr):
+        from pymotivaxmc2.core.dispatcher import Dispatcher
+        return Dispatcher(mock_socket_mgr, "notifyPort")
+
+    def _notify(self, seq: int) -> bytes:
+        return (f'<?xml version="1.0"?><emotivaNotify sequence="{seq}">'
+                f'<property name="power" value="On" visible="true"/>'
+                f'</emotivaNotify>').encode()
+
+    @pytest.mark.asyncio
+    async def test_gap_detection(self, dispatcher, mock_socket_mgr):
+        """A sequence jump counts the missed notifications; reordered/duplicate
+        frames do not."""
+        import asyncio as _asyncio
+        frames = [self._notify(5), self._notify(8), self._notify(7), self._notify(9)]
+
+        async def feed(port):
+            if frames:
+                return (frames.pop(0), None)
+            raise _asyncio.CancelledError()
+
+        mock_socket_mgr.recv.side_effect = feed
+
+        await dispatcher.start()
+        # Wait for the feed to be consumed (the run loop cancels itself via feed)
+        for _ in range(100):
+            if not frames:
+                break
+            await _asyncio.sleep(0.01)
+        await _asyncio.sleep(0.05)
+        await dispatcher.stop()
+
+        assert dispatcher.last_sequence == 9
+        assert dispatcher.gap_count == 2  # 6 and 7 missed at the 5 -> 8 jump
+
+    def test_initial_state(self, dispatcher):
+        assert dispatcher.last_sequence is None
+        assert dispatcher.gap_count == 0

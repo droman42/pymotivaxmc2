@@ -24,19 +24,58 @@ class Protocol:
         # constructed; stays ``None`` when the protocol is used standalone.
         self.dispatcher: Dispatcher | None = None
 
-        # Phase 2 Fix: Add command concurrency control and retry configuration
-        self._command_semaphore = asyncio.Semaphore(5)  # Limit concurrent commands
+        # Control-port transactions are SERIALIZED: exactly one request/response
+        # transaction (command / subscribe / update) is in flight at any time.
+        # Emotiva processors have limited processing power — concurrent control
+        # traffic can grind the device to a halt (the openHAB Emotiva binding
+        # documents the same failure) — and all control replies arrive on one
+        # unkeyed UDP queue, so concurrent transactions used to steal each
+        # other's replies (false timeouts -> silent retry storms). One
+        # transaction at a time removes both failure modes by construction.
+        self._control_lock = asyncio.Lock()
         self._max_retries = 3
         self._base_backoff = 0.5  # Base backoff time in seconds
         self._max_backoff = 8.0   # Maximum backoff time
-        
-        _LOGGER.debug("Protocol initialized with version=%s, ack_timeout=%.1f, max_concurrent=5", 
+
+        _LOGGER.debug("Protocol initialized with version=%s, ack_timeout=%.1f (serialized control port)",
                     protocol_version, ack_timeout)
 
+    async def _recv_expected(self, expected_tag: str, timeout: float):
+        """Receive control-port frames until one matches ``expected_tag``.
+
+        Frames with any other tag are STALE (late replies from an earlier
+        timed-out transaction — the device answers when it can, not when we
+        stopped waiting) — they are logged and discarded, and the wait
+        continues within the same deadline. This must never raise on an
+        unexpected tag: raising here used to convert one stale frame into a
+        full transaction retry (more packets at the device).
+
+        Raises:
+            asyncio.TimeoutError: if no matching frame arrives in ``timeout``.
+        """
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+            xml_bytes, _ = await self.socket_mgr.recv("controlPort", timeout=remaining)
+            xml = parse_xml(xml_bytes)
+            if xml.tag == expected_tag:
+                return xml
+            _LOGGER.warning("Discarding stale control-port frame '%s' (waiting for '%s')",
+                            xml.tag, expected_tag)
+
     async def send_command(self, name: str, params: dict[str, Any] | None = None):
-        """Send command with exponential backoff retry and concurrency control."""
-        # Phase 2 Fix: Limit concurrent commands to prevent resource exhaustion
-        async with self._command_semaphore:
+        """Send a command as one serialized control-port transaction.
+
+        The control lock guarantees no other transaction is in flight; stale
+        frames from earlier timed-out transactions are drained before the send,
+        and any that arrive mid-wait are discarded by :meth:`_recv_expected`
+        rather than failing the attempt (a stale frame used to convert into a
+        full transaction retry — more packets at the device).
+        """
+        async with self._control_lock:
             _LOGGER.info("Sending command '%s' with params %s", name, params)
             data = build_command(name, self.protocol_version, **(params or {}))
             
@@ -53,17 +92,12 @@ class Protocol:
                         _LOGGER.debug("Retry %d/%d with timeout %.2f (backoff: %.2f)", 
                                     attempt + 1, self._max_retries, timeout, backoff)
                     
+                    self.socket_mgr.drain("controlPort")
                     await self.socket_mgr.send(data, "controlPort")
-                    
-                    # Wait for ack on same port
+
+                    # Wait for the ack; stale frames are discarded inside.
                     _LOGGER.debug("Waiting for ack on controlPort (timeout=%.2f)", timeout)
-                    xml_bytes, _ = await self.socket_mgr.recv("controlPort", timeout=timeout)
-                    xml = parse_xml(xml_bytes)
-                    
-                    if xml.tag != "emotivaAck":
-                        _LOGGER.warning("Unexpected response tag: %s (expected 'emotivaAck')", xml.tag)
-                        raise AckTimeoutError(f"Unexpected response: {xml.tag}")
-                        
+                    xml = await self._recv_expected("emotivaAck", timeout)
                     _LOGGER.info("Received ack for command '%s' (attempt %d)", name, attempt + 1)
                     return xml
                     
@@ -122,7 +156,7 @@ class Protocol:
         which the doc only specifies with element names and no visible flag).
         """
         # Phase 2 Fix: Apply concurrency limits to property requests
-        async with self._command_semaphore:
+        async with self._control_lock:
             _LOGGER.info("Requesting properties: %s (timeout=%.1f)", properties, timeout)
 
             # Phase 2 Fix: Retry property requests with backoff
@@ -136,6 +170,7 @@ class Protocol:
                         _LOGGER.debug("Property request retry %d with timeout %.2f",
                                     attempt + 1, adaptive_timeout)
 
+                    self.socket_mgr.drain("controlPort")
                     await self.socket_mgr.send(build_update(properties, self.protocol_version), "controlPort")
 
                     results: dict[str, dict[str, Any]] = {}
@@ -211,7 +246,7 @@ class Protocol:
     async def subscribe(self, properties: list[str]) -> Dict[str, Any]:
         """Subscribe to property updates with retry logic."""
         # Phase 2 Fix: Apply concurrency limits and retry to subscriptions
-        async with self._command_semaphore:
+        async with self._control_lock:
             _LOGGER.info("Subscribing to properties: %s", properties)
 
             last_exception: Exception | None = None
@@ -223,19 +258,13 @@ class Protocol:
                         timeout = self.ack_timeout * (1.5 ** attempt)
                         _LOGGER.debug("Subscription retry %d with timeout %.2f", attempt + 1, timeout)
                     
+                    self.socket_mgr.drain("controlPort")
                     await self.socket_mgr.send(build_subscribe(properties, self.protocol_version), "controlPort")
-                    
-                    # Wait for subscription confirmation
-                    xml_bytes, _ = await self.socket_mgr.recv("controlPort", timeout=timeout)
-                    xml = parse_xml(xml_bytes)
-                    
-                    if xml.tag != "emotivaSubscription":
-                        _LOGGER.warning("Unexpected response tag: %s (expected 'emotivaSubscription')", xml.tag)
-                        if attempt < self._max_retries - 1:
-                            await asyncio.sleep(self._base_backoff * (attempt + 1))
-                            continue
-                        return {}
-                        
+
+                    # Wait for the subscription confirmation; stale frames are
+                    # discarded inside instead of burning the attempt.
+                    xml = await self._recv_expected("emotivaSubscription", timeout)
+
                     results = {}
                     # Protocol 3.0+ uses property elements with name attributes
                     if self.protocol_version >= "3.0":

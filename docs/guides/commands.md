@@ -15,8 +15,12 @@ the device's `<emotivaAck>` on the same port. A few things follow from that:
 - **They're acknowledged, not just fired.** The library waits up to `ack_timeout` (default **2 s**) for the
   ack, and **retries up to three times** with exponential backoff (0.5 → 8 s, plus jitter) before raising
   **`AckTimeoutError`**. UDP has no delivery guarantee, so this is how a dropped packet recovers.
-- **They're concurrency-limited.** At most five commands are in flight at once; extra calls queue. This
-  keeps a burst of commands from overwhelming the device.
+- **They're serialized.** Exactly one control-port transaction (command, subscribe, or status read) is in
+  flight at a time; concurrent calls queue in order. Emotiva processors have limited processing power —
+  concurrent control traffic can make the device unresponsive — and all control replies arrive on one
+  UDP socket, so serialization also guarantees a reply is always matched to the transaction that is
+  actually waiting for it. Stale frames (late replies from an earlier timed-out attempt) are drained
+  before each send and discarded if they arrive mid-wait — they never fail a fresh transaction.
 - **State helpers take a keyword-only `zone`.** `Zone.MAIN` (default) or `Zone.ZONE2`.
 
 ```python

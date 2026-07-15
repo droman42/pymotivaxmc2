@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Changed
+- **Control-port transactions are now serialized** — exactly one command /
+  subscribe / status transaction in flight at a time (was `Semaphore(5)`).
+  Emotiva processors have limited processing power (concurrent control traffic
+  can make the unit unresponsive — the openHAB Emotiva binding documents the
+  same failure), and all control replies arrive on one unkeyed UDP socket, so
+  concurrent transactions could steal each other's replies (false timeouts →
+  silent retry storms, observed against a live XMC-2). Serialization removes
+  both failure modes; the public API is unchanged (concurrent callers queue).
+- **Stale control-port frames no longer fail transactions.** Late replies from
+  an earlier timed-out attempt are drained before each send
+  (`SocketManager.drain`) and discarded if they arrive mid-wait, instead of
+  being misread as the current transaction's response and burning a retry.
+
 ## [0.7.0] - 2026-06-09
 
 ### Added

@@ -1121,13 +1121,17 @@ class TestPhase2NetworkResilienceFixes:
         mock_socket_mgr = AsyncMock()
         return Protocol(mock_socket_mgr, protocol_version="3.1", ack_timeout=1.0)
 
-    def test_protocol_has_concurrency_infrastructure(self, protocol):
-        """Test that Protocol has concurrency control infrastructure."""
-        # Phase 2 Fix: Verify concurrency control infrastructure
-        assert hasattr(protocol, '_command_semaphore')
-        assert isinstance(protocol._command_semaphore, asyncio.Semaphore)
-        assert protocol._command_semaphore._value == 5  # Default limit
-        
+    def test_protocol_serializes_control_port(self, protocol):
+        """Protocol serializes control-port transactions behind a single lock.
+
+        LIB-1 (bridge ledger): the device has limited processing power and one
+        unkeyed reply queue — Semaphore(5) concurrency both overloaded it and
+        let transactions steal each other's replies. Exactly one transaction
+        may be in flight.
+        """
+        assert hasattr(protocol, '_control_lock')
+        assert isinstance(protocol._control_lock, asyncio.Lock)
+
         # Verify retry configuration
         assert hasattr(protocol, '_max_retries')
         assert protocol._max_retries == 3

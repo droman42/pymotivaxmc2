@@ -42,6 +42,7 @@ class TestSendCommand:
     def mock_socket_mgr(self):
         """Create a mock socket manager."""
         mock = AsyncMock()
+        mock.drain = MagicMock(return_value=0)  # drain() is sync on the real SocketManager
         return mock
 
     @pytest.fixture
@@ -59,9 +60,13 @@ class TestSendCommand:
         # Send command
         result = await protocol.send_command("power_on")
         
-        # Verify socket manager calls
+        # Verify socket manager calls. The recv timeout is the remaining time to
+        # the transaction deadline, so it is ~ack_timeout, not exactly it.
         mock_socket_mgr.send.assert_called_once()
-        mock_socket_mgr.recv.assert_called_once_with("controlPort", timeout=1.0)
+        mock_socket_mgr.recv.assert_called_once()
+        args, kwargs = mock_socket_mgr.recv.call_args
+        assert args[0] == "controlPort"
+        assert kwargs["timeout"] == pytest.approx(1.0, abs=0.05)
         
         # Verify result
         assert result is not None
@@ -98,16 +103,23 @@ class TestSendCommand:
         assert "No ack received for command 'power_on'" in str(excinfo.value)
 
     @pytest.mark.asyncio
-    async def test_send_command_wrong_response_tag(self, protocol, mock_socket_mgr):
-        """Test command sending with wrong response tag."""
-        # Mock wrong response
-        wrong_xml = b'<?xml version="1.0"?><emotivaNotify/>'
-        mock_socket_mgr.recv.return_value = (wrong_xml, None)
-        
-        with pytest.raises(AckTimeoutError) as excinfo:
-            await protocol.send_command("power_on")
-        
-        assert "Unexpected response: emotivaNotify" in str(excinfo.value)
+    async def test_send_command_stale_frame_discarded(self, protocol, mock_socket_mgr):
+        """A stale control-port frame is discarded and the ack still lands.
+
+        Old behavior converted the stale frame into a failed attempt (a full
+        re-send); the serialized transaction now discards it and keeps waiting
+        within the same attempt — exactly ONE send on the wire.
+        """
+        stale_xml = b'<?xml version="1.0"?><emotivaUpdate/>'
+        ack_xml = b'<?xml version="1.0"?><emotivaAck/>'
+        mock_socket_mgr.recv.side_effect = [(stale_xml, None), (ack_xml, None)]
+
+        result = await protocol.send_command("power_on")
+
+        assert result is not None
+        assert result.tag == "emotivaAck"
+        mock_socket_mgr.send.assert_called_once()  # no retry was triggered
+        assert mock_socket_mgr.recv.call_count == 2
 
     @pytest.mark.asyncio
     async def test_send_command_no_params(self, protocol, mock_socket_mgr):
@@ -129,6 +141,7 @@ class TestRequestProperties:
     def mock_socket_mgr(self):
         """Create a mock socket manager."""
         mock = AsyncMock()
+        mock.drain = MagicMock(return_value=0)  # drain() is sync on the real SocketManager
         return mock
 
     @pytest.fixture
@@ -306,6 +319,7 @@ class TestSubscribe:
     def mock_socket_mgr(self):
         """Create a mock socket manager."""
         mock = AsyncMock()
+        mock.drain = MagicMock(return_value=0)  # drain() is sync on the real SocketManager
         return mock
 
     @pytest.fixture
@@ -386,16 +400,17 @@ class TestSubscribe:
         assert "No subscription confirmation received" in str(excinfo.value)
 
     @pytest.mark.asyncio
-    async def test_subscribe_unexpected_response(self, protocol_v2, mock_socket_mgr):
-        """Test subscription with unexpected response."""
-        # Mock wrong response type
-        wrong_xml = b'<?xml version="1.0"?><emotivaAck/>'
-        mock_socket_mgr.recv.return_value = (wrong_xml, None)
-        
+    async def test_subscribe_stale_frame_discarded(self, protocol_v2, mock_socket_mgr):
+        """A stale frame while waiting for the subscription confirmation is
+        discarded; the confirmation that follows is consumed normally."""
+        stale_xml = b'<?xml version="1.0"?><emotivaAck/>'
+        sub_xml = b'<?xml version="1.0"?><emotivaSubscription><power status="ack" value="On"/></emotivaSubscription>'
+        mock_socket_mgr.recv.side_effect = [(stale_xml, None), (sub_xml, None)]
+
         result = await protocol_v2.subscribe(["power"])
-        
-        # Should return empty dict for unexpected response
-        assert result == {}
+
+        assert "power" in result
+        mock_socket_mgr.send.assert_called_once()  # stale frame burned no attempt
 
     @pytest.mark.asyncio
     async def test_subscribe_empty_list(self, protocol_v2, mock_socket_mgr):
@@ -562,6 +577,7 @@ class TestProtocolIntegration:
     def mock_socket_mgr(self):
         """Create a mock socket manager."""
         mock = AsyncMock()
+        mock.drain = MagicMock(return_value=0)  # drain() is sync on the real SocketManager
         return mock
 
     @pytest.mark.asyncio
@@ -605,3 +621,71 @@ class TestProtocolIntegration:
             await protocol.send_command("power_on")
         
         assert "Network error" in str(excinfo.value) 
+
+class TestControlPortSerialization:
+    """LIB-1 (bridge ledger): one control-port transaction in flight at a time."""
+
+    @pytest.fixture
+    def mock_socket_mgr(self):
+        """Create a mock socket manager."""
+        mock = AsyncMock()
+        mock.drain = MagicMock(return_value=0)  # drain() is sync on the real SocketManager
+        return mock
+
+    @pytest.fixture
+    def protocol(self, mock_socket_mgr):
+        return Protocol(mock_socket_mgr, protocol_version="3.1", ack_timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_commands_are_serialized(self, protocol, mock_socket_mgr):
+        """Two concurrent send_command calls never interleave on the wire:
+        the second send happens only after the first transaction's reply."""
+        events: list[str] = []
+        ack_xml = b'<?xml version="1.0"?><emotivaAck/>'
+
+        async def fake_send(data, port):
+            events.append("send")
+
+        async def fake_recv(port, timeout=None):
+            events.append("recv")
+            await asyncio.sleep(0.01)  # give the other task a chance to interleave
+            return (ack_xml, None)
+
+        mock_socket_mgr.send.side_effect = fake_send
+        mock_socket_mgr.recv.side_effect = fake_recv
+
+        await asyncio.gather(
+            protocol.send_command("power_on"),
+            protocol.send_command("power_off"),
+        )
+
+        # Serialized: send,recv,send,recv — never send,send,...
+        assert events == ["send", "recv", "send", "recv"]
+
+    @pytest.mark.asyncio
+    async def test_stale_frames_drained_before_send(self, protocol, mock_socket_mgr):
+        """Every transaction drains the control-port queue before sending, so a
+        dead transaction's late reply can never be consumed by the next one."""
+        ack_xml = b'<?xml version="1.0"?><emotivaAck/>'
+        mock_socket_mgr.recv.return_value = (ack_xml, None)
+
+        await protocol.send_command("power_on")
+
+        mock_socket_mgr.drain.assert_called_once_with("controlPort")
+
+    @pytest.mark.asyncio
+    async def test_update_transaction_drains_and_serializes(self, protocol, mock_socket_mgr):
+        """request_properties_full participates in the same serialization +
+        drain discipline as commands."""
+        update_xml = (
+            b'<?xml version="1.0"?><emotivaUpdate protocol="3.1">'
+            b'<property name="power" value="On" visible="true" status="ack"/>'
+            b'</emotivaUpdate>'
+        )
+        mock_socket_mgr.recv.return_value = (update_xml, None)
+
+        result = await protocol.request_properties_full(["power"], timeout=0.5)
+
+        assert result["power"]["value"] == "On"
+        mock_socket_mgr.drain.assert_called_with("controlPort")
+        assert protocol._control_lock.locked() is False  # released after the transaction

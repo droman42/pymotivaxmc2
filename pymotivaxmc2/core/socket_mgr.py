@@ -103,6 +103,29 @@ class SocketManager:
         log_xml(_LOGGER, "sent", payload)
         transport.sendto(payload, (self.device_host, port))
 
+    def drain(self, port_name: str) -> int:
+        """Discard every frame currently queued for ``port_name``; return the count.
+
+        Used by the protocol layer to clear stale control-port frames (late
+        replies from a previously timed-out transaction) before starting a new
+        request/response transaction, so a new transaction can never consume a
+        dead transaction's reply.
+        """
+        port = self.ports[port_name]
+        queue = self._queues.get(port)
+        if queue is None:
+            return 0
+        drained = 0
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+                drained += 1
+            except asyncio.QueueEmpty:  # pragma: no cover - race guard
+                break
+        if drained:
+            _LOGGER.warning("Drained %d stale frame(s) from %s before new transaction", drained, port_name)
+        return drained
+
     async def recv(self, port_name: str, timeout: float | None = None):
         port = self.ports[port_name]
         queue = self._queues[port]
